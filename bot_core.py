@@ -130,8 +130,12 @@ class LinkedInSeleniumClient:
         self.setup_driver()
 
     def setup_driver(self):
+        """Setup Chrome driver with stealth options for Streamlit Cloud"""
+        from selenium import webdriver
         from selenium.webdriver.chrome.service import Service
+        from selenium.webdriver.chrome.options import Options
         from webdriver_manager.chrome import ChromeDriverManager
+        import os
     
         options = Options()
         # STREAMLIT CLOUD - Use Chromium (NOT Chrome)
@@ -143,11 +147,19 @@ class LinkedInSeleniumClient:
         options.add_argument("--disable-blink-features=AutomationControlled")
         options.add_argument("--user-agent=Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36")
         
-        # Force Chromium binary path for Streamlit Cloud
+        # STREAMLIT CLOUD - Use system Chromium
         options.binary_location = "/usr/bin/chromium-browser"
-        
-        service = Service(ChromeDriverManager().install())
-        self.driver = webdriver.Chrome(service=service, options=options)
+    
+        try:
+            # Try webdriver-manager first
+            service = Service(ChromeDriverManager().install())
+            self.driver = webdriver.Chrome(service=service, options=options)
+        except:
+            # FALLBACK: Direct chromedriver path (Streamlit Cloud)
+            service = Service("/usr/bin/chromedriver")
+            self.driver = webdriver.Chrome(service=service, options=options)
+    
+        logger.info("✅ Chrome driver ready - Stealth mode enabled")
         
         #  2026 ELITE STEALTH (BOTH PROBLEMS SOLVED)
         options.add_experimental_option("excludeSwitches", ["enable-automation", "enable-logger"])
