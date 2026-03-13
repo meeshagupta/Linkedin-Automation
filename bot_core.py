@@ -1,5 +1,4 @@
 # bot_core.py - OPERATOR-CONTROLLED DUAL MODE (13.py + New11-GSHEET)
-import pandas as pd
 import time
 import random
 import logging
