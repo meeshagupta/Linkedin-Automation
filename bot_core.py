@@ -134,7 +134,21 @@ class LinkedInSeleniumClient:
         from webdriver_manager.chrome import ChromeDriverManager
     
         options = Options()
-    
+        # STREAMLIT CLOUD - Use Chromium (NOT Chrome)
+        options.add_argument("--headless=new")
+        options.add_argument("--no-sandbox")
+        options.add_argument("--disable-dev-shm-usage")
+        options.add_argument("--disable-gpu")
+        options.add_argument("--disable-extensions")
+        options.add_argument("--disable-blink-features=AutomationControlled")
+        options.add_argument("--user-agent=Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36")
+        
+        # Force Chromium binary path for Streamlit Cloud
+        options.binary_location = "/usr/bin/chromium-browser"
+        
+        service = Service(ChromeDriverManager().install())
+        self.driver = webdriver.Chrome(service=service, options=options)
+        
         #  2026 ELITE STEALTH (BOTH PROBLEMS SOLVED)
         options.add_experimental_option("excludeSwitches", ["enable-automation", "enable-logger"])
         options.add_experimental_option('useAutomationExtension', False)
