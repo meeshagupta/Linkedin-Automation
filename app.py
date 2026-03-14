@@ -1,7 +1,5 @@
 import streamlit as st
-import time
 import os
-import json
 from bot_core import BotConfig, LinkedInCommentLiker
 
 st.set_page_config(page_title="LinkedIn Bot", layout="wide")
@@ -14,7 +12,7 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# Initialize session state
+# ==================== SESSION STATE INIT ====================
 if 'bot_status' not in st.session_state:
     st.session_state.bot_status = "🟢 Ready"
     st.session_state.logs = []
@@ -22,14 +20,13 @@ if 'bot_status' not in st.session_state:
     st.session_state.profile_mode = None
     st.session_state.company_name = None
 
-# Title
+# ==================== TITLE ====================
 st.markdown('<h1 class="main-header">🤖 LinkedIn Dual-Mode Bot</h1>', unsafe_allow_html=True)
 
-# === PROFILE MODE SELECTION ===
+# ==================== PROFILE MODE SELECTION ====================
 col1, col2 = st.columns([1, 3])
 with col1:
     st.markdown('<div class="mode-card"><h3>👤 Profile Mode</h3></div>', unsafe_allow_html=True)
-    
 with col2:
     profile_mode = st.radio(
         "Choose your profile type:",
@@ -41,23 +38,33 @@ with col2:
 
 # Dynamic company name input
 if profile_mode == "🏢 Company Page (13.py)":
-    company_name = st.text_input("🏢 Company Page Name", value="Meeshu automation", 
-                               help="Exact company page name from dropdown")
+    company_name = st.text_input("🏢 Company Page Name", value="",
+                                 help="Exact company page name from LinkedIn dropdown")
 else:
     company_name = ""
 
-# Sidebar: Credentials
+# ==================== SIDEBAR CREDENTIALS ====================
+# Each user fills in their own credentials — designed for multi-user deployment.
 st.sidebar.header("🔐 Login Credentials")
-email = st.sidebar.text_input("LinkedIn Email", value="shruti.shar10@gmail.com")
-password = st.sidebar.text_input("LinkedIn Password", type="password", value="PSabcD@123456!")
-sheet_url = st.sidebar.text_input("Google Sheet URL", 
-                                value="https://docs.google.com/spreadsheets/d/17bwCB8vbuo96tVHrW6bsBk2sFVd5CSIgYWy1LmofF2k/edit")
+email = st.sidebar.text_input(
+    "LinkedIn Email",
+    placeholder="you@example.com"
+)
+password = st.sidebar.text_input(
+    "LinkedIn Password",
+    type="password",
+    placeholder="Your LinkedIn password"
+)
+sheet_url = st.sidebar.text_input(
+    "Google Sheet URL",
+    placeholder="https://docs.google.com/spreadsheets/d/..."
+)
 creds_file = st.sidebar.file_uploader("📄 Google Service Account JSON", type="json")
 
-# Headless toggle
+# Headless must be True on Streamlit Cloud (no display available)
 headless_mode = st.sidebar.checkbox("🖥️ Headless Mode (No browser window)", value=True)
 
-# Main Status Display
+# ==================== STATUS DISPLAY ====================
 col1, col2 = st.columns([3, 1])
 with col1:
     st.markdown(f"""
@@ -70,21 +77,34 @@ with col1:
 with col2:
     col_btn1, col_btn2 = st.columns(2)
     with col_btn1:
-        if st.button("🚀 START BOT", use_container_width=True, type="primary") and creds_file:
-            st.session_state.profile_mode = profile_mode
-            st.session_state.company_name = company_name if company_name else None
-            st.session_state.running = True
-            st.session_state.bot_status = "🔄 Initializing..."
-            st.rerun()
-    
+        start_clicked = st.button("🚀 START BOT", use_container_width=True, type="primary")
+        if start_clicked:
+            if not creds_file:
+                # ✅ FIX 2: Show visible warning instead of silently ignoring missing creds
+                st.warning("⚠️ Please upload credentials.json first!")
+            elif not email or not password or not sheet_url:
+                st.warning("⚠️ Please fill in all credentials!")
+            else:
+                st.session_state.profile_mode = profile_mode
+                st.session_state.company_name = company_name if company_name else None
+                st.session_state.running = True
+                st.session_state.bot_status = "🔄 Initializing..."
+                # ✅ FIX 3: Explicitly set bot_step on every fresh start.
+                # Previously bot_step was only set if missing, so after an error
+                # (which set it to None) a new START would skip all steps silently.
+                st.session_state.bot_step = "save_creds"
+                st.rerun()
+
     with col_btn2:
         if st.button("🛑 STOP", use_container_width=True):
             st.session_state.running = False
             st.session_state.bot_status = "🛑 Stopped"
             st.session_state.logs = []
+            # ✅ FIX 3 (cont): Clear bot_step on stop so next START begins fresh
+            st.session_state.pop("bot_step", None)
             st.rerun()
 
-# Live Logs
+# ==================== LIVE LOGS ====================
 st.subheader("📋 Live Logs")
 log_container = st.container(height=500)
 with log_container:
@@ -94,16 +114,19 @@ with log_container:
     else:
         st.info("👈 Click START BOT to begin...")
 
-# === BOT EXECUTION (NON-BLOCKING) ===
-if (st.session_state.running and creds_file and st.session_state.profile_mode):
-    # SINGLE EXECUTION - NO REPEATED RERUNS
-    if "bot_step" not in st.session_state:
+# ==================== BOT EXECUTION ====================
+if st.session_state.running and creds_file and st.session_state.profile_mode:
+
+    # Safety guard: should always be set by the START button now
+    if "bot_step" not in st.session_state or st.session_state.bot_step is None:
         st.session_state.bot_step = "save_creds"
 
     with log_container:
         try:
             if st.session_state.bot_step == "save_creds":
-                credspath = "tempcreds.json"
+                # ✅ FIX 4: Use /tmp/ — guaranteed writable on Streamlit Cloud.
+                # The repo root may be read-only in cloud deployments.
+                credspath = "/tmp/tempcreds.json"
                 with open(credspath, "wb") as f:
                     f.write(creds_file.getvalue())
                 st.session_state.logs.append("✅ Credentials saved")
@@ -125,12 +148,12 @@ if (st.session_state.running and creds_file and st.session_state.profile_mode):
                     linkedin_password=password,
                     google_sheet_url=sheet_url,
                     company_page_name=st.session_state.company_name,
-                    google_credentials_file="tempcreds.json",
+                    google_credentials_file="/tmp/tempcreds.json",  # ✅ FIX 4 (cont)
                     headless_mode=headless_mode,
                     mode=st.session_state.bot_mode
                 )
                 st.session_state.config = config
-                st.session_state.logs.append("🤖 Initializing bot...")
+                st.session_state.logs.append("🤖 Bot config ready...")
                 st.session_state.bot_step = "create_bot"
                 st.rerun()
 
@@ -161,22 +184,29 @@ if (st.session_state.running and creds_file and st.session_state.profile_mode):
             st.session_state.bot_status = f"❌ ERROR: {error_msg}"
             st.session_state.logs.append(f"❌ Error: {error_msg}")
             st.session_state.running = False
-            st.session_state.bot_step = None
+            # ✅ FIX 5: Pop bot_step entirely after error (not set to None).
+            # Setting to None kept the key in session_state, causing the safety guard
+            # above to NOT trigger on next START, so steps were silently skipped.
+            st.session_state.pop("bot_step", None)
             st.rerun()
 
+# ==================== EMERGENCY STOP ====================
 if st.sidebar.button("💥 EMERGENCY STOP", type="secondary"):
     for key in list(st.session_state.keys()):
         del st.session_state[key]
+    try:
+        os.remove("/tmp/tempcreds.json")
+    except Exception:
+        pass
     st.rerun()
 
-
-# Instructions
-with st.expander("📖 How to Use", expanded=True):
+# ==================== INSTRUCTIONS ====================
+with st.expander("📖 How to Use", expanded=False):
     st.markdown("""
     ### 🎮 **Step-by-Step:**
     1. **Choose Profile Mode** 👆 (Personal = New11 | Company = 13.py)
-    2. **Enter Company Name** (if Company mode - exact name from LinkedIn dropdown)
-    3. **Fill credentials** (pre-filled for testing)
+    2. **Enter Company Name** (if Company mode — exact name from LinkedIn dropdown)
+    3. **Fill credentials** in sidebar (or pre-load via Streamlit Secrets)
     4. **Upload** `credentials.json` (Google Service Account with Sheets API enabled)
     5. **Click START BOT** 🚀
 
@@ -189,7 +219,7 @@ with st.expander("📖 How to Use", expanded=True):
     ### ✅ **Expected Results in Google Sheet:**
     ```
     Personal: PERSONAL:Glaztower
-    Company:  COMPANY:Glaztower  
+    Company:  COMPANY:Glaztower
     POST_ONLY, FAILED also possible
     ```
 
@@ -198,20 +228,18 @@ with st.expander("📖 How to Use", expanded=True):
     Post Url | Name | Status
     https://... | Glaztower | [Bot fills this]
     ```
-
-    **💡 Pro Tip:** Bot targets comments from your TARGET_NAMES list in bot_core.py (Glaztower, etc.)
     """)
 
-# Debug info
+# ==================== SIDEBAR STATUS ====================
 if creds_file:
-    st.sidebar.success("✅ Credentials OK!")
-    st.sidebar.caption(f"Mode detected: {profile_mode}")
+    st.sidebar.success("✅ Credentials file OK!")
+    st.sidebar.caption(f"Mode: {profile_mode}")
 else:
     st.sidebar.warning("⚠️ Upload credentials.json")
 
-# Clean temp files on stop
-if not st.session_state.running and os.path.exists("tempcreds.json"):
+# ==================== TEMP FILE CLEANUP ====================
+if not st.session_state.running and os.path.exists("/tmp/tempcreds.json"):
     try:
-        os.remove("tempcreds.json")
-    except:
+        os.remove("/tmp/tempcreds.json")
+    except Exception:
         pass
