@@ -1,0 +1,9 @@
+services:
+  - type: web
+    name: linkedin-automation
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    plan: free
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.11"
