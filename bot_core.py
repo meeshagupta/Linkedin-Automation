@@ -15,6 +15,8 @@ from selenium.webdriver.common.action_chains import ActionChains
 from webdriver_manager.chrome import ChromeDriverManager
 from webdriver_manager.core.os_manager import ChromeType
 import os
+import json
+import hashlib
 
 # ==================== OPERATOR-CONTROLLED CONFIG ====================
 class BotConfig:
@@ -132,6 +134,89 @@ class GoogleSheetHandler:
         except Exception as e:
             logger.error(f" ❌ Status update failed: {e}")
 
+
+# ==================== CUSTOM EXCEPTIONS ====================
+class LinkedInVerificationRequired(Exception):
+    """Raised when LinkedIn demands an email verification code before login."""
+    pass
+
+# ==================== COOKIE SESSION MANAGER ====================
+def _cookie_path(email: str) -> str:
+    """
+    Returns a unique cookie file path per user email.
+    Stored in /tmp/ so it persists across bot runs within the same session.
+    Uses a hash so the email never appears in the filename.
+    """
+    email_hash = hashlib.md5(email.encode()).hexdigest()[:12]
+    return f"/tmp/li_session_{email_hash}.json"
+
+def save_cookies(driver, email: str):
+    """Save LinkedIn session cookies to file after successful login."""
+    try:
+        cookies = driver.get_cookies()
+        path = _cookie_path(email)
+        with open(path, "w") as f:
+            json.dump(cookies, f)
+        logger.info(f"✅ Session cookies saved ({len(cookies)} cookies)")
+    except Exception as e:
+        logger.warning(f"⚠️ Could not save cookies: {e}")
+
+def load_cookies(driver, email: str) -> bool:
+    """
+    Load saved cookies into the browser.
+    Returns True if cookies were loaded successfully, False if no file found.
+    """
+    path = _cookie_path(email)
+    if not os.path.exists(path):
+        logger.info("🍪 No saved session found — will do fresh login")
+        return False
+    try:
+        # Must visit LinkedIn domain first before setting cookies
+        driver.get("https://www.linkedin.com")
+        human_sleep(2, 3)
+        with open(path, "r") as f:
+            cookies = json.load(f)
+        for cookie in cookies:
+            # Remove fields that cause issues
+            cookie.pop("sameSite", None)
+            cookie.pop("expiry", None)
+            try:
+                driver.add_cookie(cookie)
+            except Exception:
+                continue
+        logger.info(f"✅ Loaded {len(cookies)} session cookies")
+        return True
+    except Exception as e:
+        logger.warning(f"⚠️ Could not load cookies: {e}")
+        return False
+
+def clear_cookies(email: str):
+    """Delete saved cookies for a user (forces fresh login next time)."""
+    path = _cookie_path(email)
+    if os.path.exists(path):
+        os.remove(path)
+        logger.info("🗑️ Saved session cleared")
+
+def session_is_valid(driver) -> bool:
+    """
+    Check if current browser session is a valid logged-in LinkedIn session.
+    Navigates to feed and checks URL/page content.
+    """
+    try:
+        driver.get("https://www.linkedin.com/feed/")
+        human_sleep(4, 6)
+        current_url = driver.current_url
+        if "feed" in current_url:
+            logger.info("✅ Session valid — already logged in!")
+            return True
+        if "login" in current_url or "checkpoint" in current_url:
+            logger.info("🔄 Session expired — need fresh login")
+            return False
+        return False
+    except Exception as e:
+        logger.warning(f"⚠️ Session check failed: {e}")
+        return False
+
 # ==================== SELENIUM CLIENT ====================
 class LinkedInSeleniumClient:
     def __init__(self, email, password, headless=False, config=None):
@@ -143,9 +228,10 @@ class LinkedInSeleniumClient:
         self.setup_driver()
 
     def setup_driver(self):
-        """Clean Render/Docker setup — Chrome installed via Dockerfile apt-get."""
+        """🔥 BULLETPROOF - Works EVERYWHERE (Streamlit Cloud + Local)"""
         options = Options()
-        options.add_argument("--headless=new")
+        if self.headless:
+            options.add_argument("--headless=new")
         options.add_argument("--no-sandbox")
         options.add_argument("--disable-dev-shm-usage")
         options.add_argument("--disable-gpu")
@@ -153,34 +239,35 @@ class LinkedInSeleniumClient:
         options.add_argument("--disable-blink-features=AutomationControlled")
         options.add_argument("--user-agent=Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36")
         options.add_experimental_option("excludeSwitches", ["enable-automation"])
-        options.add_experimental_option("useAutomationExtension", False)
+        options.add_experimental_option('useAutomationExtension', False)
 
-        # Chrome binary — set by Dockerfile ENV or found at known apt paths
-        chrome_candidates = [
-            os.environ.get("CHROME_BIN", ""),
+        # ✅ FIX: Set chromium binary location explicitly for Streamlit Cloud
+        chromium_binaries = [
             "/usr/bin/chromium",
             "/usr/bin/chromium-browser",
-            "/usr/bin/google-chrome-stable",
-            "/usr/bin/google-chrome",
+            "/usr/lib/chromium/chromium",
         ]
-        chrome_bin = next((p for p in chrome_candidates if p and os.path.exists(p)), None)
-        if chrome_bin:
-            options.binary_location = chrome_bin
-            logger.info(f"✅ Chrome binary: {chrome_bin}")
-        else:
-            logger.warning("⚠️ Chrome binary not found — driver will attempt auto-detect")
+        for binary in chromium_binaries:
+            if os.path.exists(binary):
+                options.binary_location = binary
+                logger.info(f"✅ Chromium binary found: {binary}")
+                break
 
-        # ChromeDriver — set by Dockerfile ENV or found at known apt paths
+        # ✅ FIX: Build driver path list LAZILY — never call .install() eagerly in a list.
+        # Eagerly calling ChromeDriverManager().install() causes 'NoneType has no attribute split'
+        # when chromium is not in PATH, because the result (None) gets passed to Service().
         def get_driver_paths():
-            candidates = [
-                os.environ.get("CHROMEDRIVER_PATH", ""),
-                "/usr/bin/chromedriver",
-                "/usr/lib/chromium/chromedriver",
-                "/usr/lib/chromium-browser/chromedriver",
+            static_paths = [
+                "/usr/bin/chromedriver",                  # Streamlit Cloud (chromium-driver pkg)
+                "/usr/lib/chromium/chromedriver",          # Debian alternative
+                "/usr/lib/chromium-browser/chromedriver",  # Ubuntu alternative
+                "/snap/bin/chromium.chromedriver",         # Snap install
             ]
-            for p in candidates:
-                if p and os.path.exists(p):
+            for p in static_paths:
+                if os.path.exists(p):
                     yield p
+
+            # Only try webdriver-manager as last resort, and guard against None return
             try:
                 path = ChromeDriverManager(chrome_type=ChromeType.CHROMIUM).install()
                 if path:
@@ -197,27 +284,52 @@ class LinkedInSeleniumClient:
         self.driver = None
         for attempt, path in enumerate(get_driver_paths(), 1):
             try:
-                logger.info(f"🔄 [attempt {attempt}] Trying chromedriver: {path}")
+                logger.info(f"🔄 [attempt {attempt}] Trying: {str(path)[:60]}...")
                 service = Service(executable_path=path)
                 self.driver = webdriver.Chrome(service=service, options=options)
-                logger.info(f"✅ Driver ready!")
+                logger.info(f"✅ [attempt {attempt}] DRIVER READY with: {path}")
                 break
             except Exception as e:
                 logger.warning(f"❌ [attempt {attempt}] Failed: {str(e)[:80]}")
                 continue
 
         if not self.driver:
-            raise Exception("❌ Chrome/ChromeDriver not found. Check Dockerfile build logs.")
-
-        self.driver.execute_cdp_cmd("Page.addScriptToEvaluateOnNewDocument", {
-            "source": "Object.defineProperty(navigator, 'webdriver', {get: () => undefined});"
+            raise Exception(
+                "❌ NO WORKING CHROMEDRIVER FOUND.\n"
+                "Ensure your packages.txt (not package.txt!) contains:\n"
+                "  chromium\n  chromium-driver\n  xvfb"
+            )
+        
+        # Stealth (only if driver exists)
+        self.driver.execute_cdp_cmd('Page.addScriptToEvaluateOnNewDocument', {
+            'source': 'Object.defineProperty(navigator, "webdriver", {get: () => undefined});'
         })
         self.driver.implicitly_wait(15)
-        logger.info("🚀 Stealth mode activated!")
+        logger.info("🚀 STEALTH MODE ACTIVATED!")
 
     def login(self):
+        """
+        Smart login with cookie session reuse.
+        1. Try loading saved cookies → check if session still valid → skip login entirely
+        2. If no cookies or session expired → do fresh login
+        3. If LinkedIn asks for verification → raise LinkedInVerificationRequired
+        4. On successful login → always save fresh cookies
+        """
         try:
-            logger.info("🔐 Logging in...")
+            # ── STEP 1: Try saved session first ──
+            cookies_loaded = load_cookies(self.driver, self.email)
+            if cookies_loaded:
+                logger.info("🍪 Checking saved session...")
+                if session_is_valid(self.driver):
+                    logger.info("✅ SESSION RESTORED — No login needed, no verification email!")
+                    save_cookies(self.driver, self.email)  # refresh cookie file
+                    return
+                else:
+                    logger.info("🔄 Saved session expired — doing fresh login")
+                    clear_cookies(self.email)
+
+            # ── STEP 2: Fresh login ──
+            logger.info("🔐 Starting fresh login...")
             self.driver.get("https://www.linkedin.com/login")
             human_sleep(4, 7)
             human_scroll(self.driver)
@@ -234,32 +346,113 @@ class LinkedInSeleniumClient:
             human_type(password_el, self.password)
             human_pause()
 
-            # UNCHECK "Keep me logged in"
+            # Keep "Remember me" CHECKED — helps avoid repeated verification
             try:
                 remember_checkbox = WebDriverWait(self.driver, 10).until(
-                    EC.presence_of_element_located((By.XPATH, "//input[@type='checkbox' and (@name='remember' or contains(@aria-label,'Remember') or contains(@id,'remember'))]"))
+                    EC.presence_of_element_located((By.XPATH,
+                        "//input[@type='checkbox' and (@name='remember' or "
+                        "contains(@aria-label,'Remember') or contains(@id,'remember'))]"
+                    ))
                 )
-                if remember_checkbox.is_selected():
-                    logger.info(" Unchecking 'Keep me logged in'...")
+                if not remember_checkbox.is_selected():
+                    logger.info(" ✅ Keeping 'Remember me' checked (reduces verification)")
                     self.driver.execute_script("arguments[0].click();", remember_checkbox)
                     human_sleep(1, 2)
             except:
-                logger.info(" No 'Keep me logged in' checkbox found")
+                pass  # checkbox not found — that's fine
 
             login_btn = self.driver.find_element(By.XPATH, "//button[@type='submit']")
             human_mouse_move(self.driver, login_btn)
             human_sleep(2, 4)
             login_btn.click()
-            
+
             human_pause()
             WebDriverWait(self.driver, 60).until(
-                EC.any_of(EC.url_contains("feed"), EC.url_contains("checkpoint"))
+                EC.any_of(EC.url_contains("feed"), EC.url_contains("checkpoint"),
+                          EC.url_contains("verify"))
             )
+
+            # ── STEP 3: Check if verification required ──
+            current = self.driver.current_url
+            if "checkpoint" in current or "verify" in current:
+                logger.info("📧 VERIFICATION REQUIRED — LinkedIn sent a code to your email")
+                raise LinkedInVerificationRequired(
+                    "LinkedIn requires email verification. Check your inbox."
+                )
+
+            # ── STEP 4: Success — save cookies ──
             logger.info("✅ LOGIN SUCCESSFUL")
             human_pause()
-            
+            save_cookies(self.driver, self.email)
+
+        except LinkedInVerificationRequired:
+            raise
         except Exception as e:
             logger.error(f"❌ Login failed: {e}")
+            raise
+
+    def submit_verification_code(self, code: str):
+        """Submit the LinkedIn email verification code then save cookies."""
+        try:
+            logger.info(f"🔑 Submitting verification code...")
+            human_sleep(2, 3)
+
+            code_input = None
+            selectors = [
+                (By.ID, "input__email_verification_pin"),
+                (By.ID, "input__phone_verification_pin"),
+                (By.XPATH, "//input[@name='pin']"),
+                (By.XPATH, "//input[contains(@id,'verification')]"),
+                (By.XPATH, "//input[contains(@id,'pin')]"),
+                (By.XPATH, "//input[@type='number']"),
+                (By.XPATH, "//input[@type='text']"),
+            ]
+            for by, sel in selectors:
+                try:
+                    code_input = WebDriverWait(self.driver, 5).until(
+                        EC.presence_of_element_located((by, sel))
+                    )
+                    logger.info(f"✅ Code input found")
+                    break
+                except:
+                    continue
+
+            if not code_input:
+                raise Exception("Could not find verification input field")
+
+            code_input.clear()
+            human_sleep(0.5, 1)
+            human_type(code_input, code.strip())
+            human_sleep(1, 2)
+
+            # Submit
+            for by, sel in [
+                (By.XPATH, "//button[@type='submit']"),
+                (By.XPATH, "//button[contains(text(),'Verify')]"),
+                (By.XPATH, "//button[contains(text(),'Submit')]"),
+                (By.XPATH, "//button[contains(text(),'Continue')]"),
+            ]:
+                try:
+                    btn = WebDriverWait(self.driver, 5).until(
+                        EC.element_to_be_clickable((by, sel))
+                    )
+                    human_mouse_move(self.driver, btn)
+                    human_sleep(1, 2)
+                    btn.click()
+                    break
+                except:
+                    continue
+
+            human_sleep(4, 6)
+            WebDriverWait(self.driver, 30).until(EC.url_contains("feed"))
+
+            # ── Save cookies immediately after verification ──
+            # This is the key step — next run will skip login entirely
+            save_cookies(self.driver, self.email)
+            logger.info("✅ VERIFICATION DONE — Session saved! No more codes next time 🎉")
+
+        except Exception as e:
+            logger.error(f"❌ Verification failed: {e}")
             raise
 
     def switch_to_company_page(self):
