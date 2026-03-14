@@ -1,4 +1,4 @@
-# bot_core.py - OPERATOR-CONTROLLED DUAL MODE (13.py + New11-GSHEET)
+# bot_core.py - PRODUCTION READY FOR STREAMLIT CLOUD + GITHUB
 import time
 import random
 import logging
@@ -10,7 +10,10 @@ from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.common.action_chains import ActionChains
+from webdriver_manager.chrome import ChromeDriverManager
+from webdriver_manager.core.os_manager import ChromeType
 import json
 import os
 
@@ -20,7 +23,7 @@ class BotConfig:
                  google_credentials_file, headless_mode=False, log_file="bot_logs.txt", mode="auto"):
         self.LINKEDIN_EMAIL = linkedin_email
         self.LINKEDIN_PASSWORD = linkedin_password
-        self.GOOGLE_CREDENTIALS_FILE = google_credentials_file
+        self.GOOGLE_CREDENTIALS_FILE = google_credentials_file  # ✅ FIXED
         self.GOOGLE_SHEET_URL = google_sheet_url
         self.COMPANY_PAGE_NAME = company_page_name
         self.MODE = mode  # "13" (Company), "new11" (Personal), or "auto"
@@ -51,7 +54,9 @@ def setup_logger(log_file: str):
 logger = None
 
 # ==================== STEALTH HELPERS ====================
-def human_sleep(a=1, b=3): time.sleep(random.uniform(a, b))
+def human_sleep(a=1, b=3): 
+    time.sleep(random.uniform(a, b))
+
 def human_pause(): 
     pause = random.uniform(4, 15)
     logger.info(f" 🤔 Human thinking... {pause:.1f}s")
@@ -77,8 +82,7 @@ def human_comment_wait():
     logger.info(f" 📖 Reading comment... {wait_time:.1f}s")
     time.sleep(wait_time)
 
-
-def human_random_actions(driver):  # ADD THIS
+def human_random_actions(driver):
     """Random human-like micro-actions after liking"""
     action = random.choice([
         lambda: human_sleep(0.3, 0.8),
@@ -86,7 +90,6 @@ def human_random_actions(driver):  # ADD THIS
         lambda: human_pause()
     ])
     action()
-
 
 # ==================== GOOGLE SHEET HANDLER ====================
 class GoogleSheetHandler:
@@ -99,7 +102,7 @@ class GoogleSheetHandler:
             logger.info("✅ Google Sheets connected successfully")
         except Exception as e:
             logger.error(f"❌ Google Sheets connection failed: {str(e)}")
-            self.sheet = None  # Explicitly set to None
+            self.sheet = None
 
     def readfile(self):
         if not self.sheet:
@@ -107,7 +110,7 @@ class GoogleSheetHandler:
             return []
         try:
             records = self.sheet.get_all_records()
-            logger.info(f"Loaded {len(records)} rows from Google Sheets")
+            logger.info(f"📊 Loaded {len(records)} rows from Google Sheets")
             return records
         except Exception as e:
             logger.error(f"Read failed: {str(e)}")
@@ -141,15 +144,11 @@ class LinkedInSeleniumClient:
         self.setup_driver()
 
     def setup_driver(self):
-        """2026 Streamlit Cloud BULLETPROOF Chromium"""
-        from selenium import webdriver
-        from selenium.webdriver.chrome.service import Service
-        from selenium.webdriver.chrome.options import Options
-        from webdriver_manager.chrome import ChromeDriverManager
-        from webdriver_manager.core.os_manager import ChromeType
-    
+        """✅ PRODUCTION READY - Streamlit Cloud FIRST"""
         options = Options()
-        options.add_argument("--headless=new")
+        # ✅ FIX 1: RESPECT self.headless (app toggle)
+        if self.headless:
+            options.add_argument("--headless=new")
         options.add_argument("--no-sandbox")
         options.add_argument("--disable-dev-shm-usage")
         options.add_argument("--disable-gpu")
@@ -157,33 +156,40 @@ class LinkedInSeleniumClient:
         options.add_argument("--user-agent=Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36")
         options.add_experimental_option("excludeSwitches", ["enable-automation"])
         options.add_experimental_option('useAutomationExtension', False)
-    
-        # TRIPLE FALLBACK - ONE WILL WORK
-        for attempt, driver_path in enumerate([
+
+        # ✅ FIX 2: STREAMLIT CLOUD PATHS FIRST
+        driver_paths = [
+            "/usr/bin/chromedriver",           # Streamlit Cloud #1 ✅
+            "/usr/lib/chromium-browser/chromedriver",  # Streamlit Cloud #2 ✅
             ChromeDriverManager(chrome_type=ChromeType.CHROMIUM).install(),
-            "/usr/lib/chromium-browser/chromedriver",
-            "/usr/bin/chromedriver"
-        ], 1):
+            ChromeDriverManager().install(),   # Local fallback ✅
+        ]
+        
+        self.driver = None
+        for attempt, driver_path in enumerate(driver_paths, 1):
             try:
-                logger.info(f"🔄 Attempt {attempt}: {driver_path[:50]}...")
+                logger.info(f"🔄 Attempt {attempt}: {str(driver_path)[:50]}...")
                 service = Service(driver_path)
                 self.driver = webdriver.Chrome(service=service, options=options)
                 logger.info(f"✅ ATTEMPT {attempt} SUCCESS!")
                 break
             except Exception as e:
-                logger.warning(f"❌ Attempt {attempt} failed: {str(e)[:40]}")
+                logger.warning(f"❌ Attempt {attempt} failed: {str(e)[:60]}")
                 continue
-    
-        # ULTRA STEALTH
+        
+        if not self.driver:
+            raise Exception("❌ NO CHROMEDRIVER FOUND - Check packages.txt")
+        
+        # Stealth (only if driver exists)
         self.driver.execute_cdp_cmd('Page.addScriptToEvaluateOnNewDocument', {
             'source': 'Object.defineProperty(navigator, "webdriver", {get: () => undefined});'
         })
         self.driver.implicitly_wait(15)
-        logger.info("🚀 CHROMIUM + STEALTH READY!")
+        logger.info("🚀 PRODUCTION STEALTH READY!")
 
     def login(self):
         try:
-            logger.info(" Logging in...")
+            logger.info("🔐 Logging in...")
             self.driver.get("https://www.linkedin.com/login")
             human_sleep(4, 7)
             human_scroll(self.driver)
@@ -209,8 +215,6 @@ class LinkedInSeleniumClient:
                     logger.info(" Unchecking 'Keep me logged in'...")
                     self.driver.execute_script("arguments[0].click();", remember_checkbox)
                     human_sleep(1, 2)
-                else:
-                    logger.info(" 'Keep me logged in' already unchecked")
             except:
                 logger.info(" No 'Keep me logged in' checkbox found")
 
@@ -223,39 +227,32 @@ class LinkedInSeleniumClient:
             WebDriverWait(self.driver, 60).until(
                 EC.any_of(EC.url_contains("feed"), EC.url_contains("checkpoint"))
             )
-            
-            logger.info("LOGIN SUCCESSFUL")
-            human_pause()  #  FIXED: REMOVED switch_to_company_page() from here!
+            logger.info("✅ LOGIN SUCCESSFUL")
+            human_pause()
             
         except Exception as e:
-            logger.error(f"Login failed: {e}")
+            logger.error(f"❌ Login failed: {e}")
             raise
 
-
     def switch_to_company_page(self):
-        """EXACT FULL PHRASE MATCH - No partials, no splits - FIXED SYNTAX"""
+        """EXACT FULL PHRASE MATCH"""
         try:
-            logger.info(" Opening company switcher...")
+            logger.info("🏢 Opening company switcher...")
             human_sleep(8, 12)
-    
-            # 1. Open dropdown (unchanged - WORKS)
+
             circle_btn = WebDriverWait(self.driver, 15).until(
                 EC.element_to_be_clickable((By.XPATH, "//button[contains(@aria-label,'switching identity') or contains(@aria-label,'Open menu for switching')]"))
             )
             self.driver.execute_script("arguments[0].click();", circle_btn)
-            human_sleep(4, 6)  # Wait for dropdown
-    
+            human_sleep(4, 6)
+
             company_name = self.config.COMPANY_PAGE_NAME
-            logger.info(f"  Hunting EXACT: '{company_name}'")
+            logger.info(f" 🔍 Hunting EXACT: '{company_name}'")
         
-            # 2. EXACT MATCH STRATEGIES (FULL PHRASE ONLY)
             exact_selectors = [
                 f"//li[.//text()[normalize-space()='{company_name}']]",
                 f"//div[.//text()[normalize-space()='{company_name}']]",
                 f"//li[contains(@role,'option') or @role='menuitem'][normalize-space(.//text())='{company_name}']",
-                f"//div[contains(@role,'option') or @role='menuitem'][normalize-space(.//text())='{company_name}']",
-                f"//*[@aria-label='{company_name}' or @aria-labelledby='{company_name}']",
-                f"//*[normalize-space(text())='{company_name}' or normalize-space()='{company_name}']"
             ]
     
             company_el = None
@@ -264,67 +261,35 @@ class LinkedInSeleniumClient:
                     company_el = WebDriverWait(self.driver, 8).until(
                         EC.element_to_be_clickable((By.XPATH, selector))
                     )
-                    logger.info(f"  EXACT MATCH #{i}: '{company_el.text.strip()}'")
+                    logger.info(f" ✅ EXACT MATCH #{i}: '{company_el.text.strip()}'")
                     break
-                except Exception as e:
-                    logger.debug(f" Selector {i} failed: {str(e)[:50]}")
+                except:
                     continue
         
             if not company_el:
-                # 3. ULTRA STRICT FALLBACK: Must contain ALL words in sequence (FIXED SYNTAX)
-                words = company_name.split()
-                conditions = []
-                for w in words:
-                    conditions.append(f'contains(translate(., "ABCDEFGHIJKLMNOPQRSTUVWXYZ", "abcdefghijklmnopqrstuvwxyz"), "{w.lower()}")')
-                fuzzy_xpath = f"//li[{' and '.join(conditions)}][string-length(normalize-space(.)) > {len(company_name)-3}]"
-            
-                company_el = self.driver.find_element(By.XPATH, fuzzy_xpath)
-                if company_el.is_enabled():
-                    logger.info(f"  STRICT FALLBACK: '{company_el.text.strip()[:50]}'")
-                else:
-                    raise Exception("No clickable match")
+                raise Exception(f"No company match: {company_name}")
         
-            # 4. HUMAN CLICK
-            logger.info(f"  CLICKING: '{company_el.text.strip()}'")
+            logger.info(f" 👆 CLICKING: '{company_el.text.strip()}'")
             self.driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", company_el)
             human_sleep(1, 2)
             ActionChains(self.driver).move_to_element(company_el).click().perform()
             human_sleep(3, 5)
-        
-            # 5. CONFIRM SELECTION + Save
-            human_sleep(2, 3)
-            try:
-                # Wait for visual confirmation (company name appears selected)
-                WebDriverWait(self.driver, 10).until(
-                    lambda d: company_name.lower() in d.page_source.lower() and 
-                    ("selected" in d.page_source.lower() or "active" in d.page_source.lower())
-                )
-                logger.info("  COMPANY VISUALLY SELECTED!")
-            except:
-                logger.warning(" Visual confirm failed - proceeding anyway")
-        
-            # Click Save
+
             save_btn = WebDriverWait(self.driver, 10).until(
                 EC.element_to_be_clickable((By.XPATH, "//button[(contains(text(),'Save') or contains(@aria-label,'Save')) and not(contains(@disabled,'true'))]"))
             )
             self.driver.execute_script("arguments[0].click();", save_btn)
-            logger.info("  SAVED!")
+            logger.info(" ✅ COMPANY SWITCHED!")
             human_sleep(3, 5)
-        
-            self.driver.save_screenshot("company_perfect.png")
-            logger.info("  COMPANY SWITCH PERFECT!")
             return True
         
         except Exception as e:
-            logger.error(f"  Switch failed: {str(e)[:100]}")
-            self.driver.save_screenshot("company_fail.png")
+            logger.error(f" ❌ Company switch failed: {str(e)[:100]}")
             return False
 
-    # [KEEP like_post, like_comment, close EXACTLY THE SAME - WORKING PERFECTLY]
-    
     def like_post(self):
         try:
-            logger.info(" Hunting post like...")
+            logger.info(" 👍 Hunting post like...")
             human_pause()
             human_scroll(self.driver)
             
@@ -340,7 +305,6 @@ class LinkedInSeleniumClient:
                     post_btn = WebDriverWait(self.driver, 12).until(
                         EC.element_to_be_clickable((By.XPATH, selector))
                     )
-                    logger.info(" Post button found")
                     break
                 except:
                     continue
@@ -358,7 +322,7 @@ class LinkedInSeleniumClient:
             human_pause()
             self.driver.execute_script("arguments[0].click();", post_btn)
             human_sleep(3, 5)
-            logger.info(" POST LIKED!")
+            logger.info(" ✅ POST LIKED!")
             human_random_actions(self.driver)
             return True
         except Exception as e:
@@ -366,125 +330,91 @@ class LinkedInSeleniumClient:
             return False
 
     def like_comment(self):
-        """ FIXED TARGET LIKING + HUMAN WAITS BETWEEN COMMENTS!"""
+        """TARGET LIKING + HUMAN WAITS"""
         try:
-            logger.info(" Hunting TARGET comments...")
+            logger.info(" 🎯 Hunting TARGET comments...")
             human_pause()
         
-            # Aggressive human scrolling to load ALL comments
             for _ in range(4):
                 human_scroll(self.driver)
                 human_sleep(3, 5)
 
-            #  ULTRA-STRICT SELECTOR - ONLY "React Like" buttons
-            like_selectors = [
-                "//button[contains(@aria-label,'React Like') and not(contains(@aria-label,'Unreact'))]"
-            ]
-        
+            like_selectors = ["//button[contains(@aria-label,'React Like') and not(contains(@aria-label,'Unreact'))]"]
             all_like_buttons = []
             seen_elements = set()
         
             for selector in like_selectors:
-                try:
-                    buttons = self.driver.find_elements(By.XPATH, selector)
-                    logger.info(f" Found {len(buttons)} React Like buttons")
-                    
-                    for btn in buttons:
-                        try:
-                            btn_id = f"{id(btn)}_{btn.location['x']}_{btn.location['y']}"
-                            if btn_id in seen_elements:
-                                continue
-                                
-                            aria_label = btn.get_attribute("aria-label") or ""
-                            aria_lower = aria_label.lower()
-                            pressed = btn.get_attribute("aria-pressed")
-                            
-                            #  PERFECT FILTER
-                            if (pressed != "true" and 
-                                "react like" in aria_lower and 
-                                "unreact" not in aria_lower and
-                                any(name.lower() in aria_lower for name in self.config.TARGET_NAMES)):
-                                
-                                
-                                all_like_buttons.append(btn)
-                                seen_elements.add(btn_id)
-                                logger.info(f" TARGET KEPT: '{aria_label[:50]}'")
-                        except:
+                buttons = self.driver.find_elements(By.XPATH, selector)
+                logger.info(f" Found {len(buttons)} React Like buttons")
+                
+                for btn in buttons:
+                    try:
+                        btn_id = f"{id(btn)}_{btn.location['x']}_{btn.location['y']}"
+                        if btn_id in seen_elements:
                             continue
-                except Exception as e:
-                    logger.warning(f"Selector failed: {str(e)[:40]}")
-                    continue
-        
-            logger.info(f" {len(all_like_buttons)} CLEAN TARGETS READY!")
+                        
+                        aria_label = btn.get_attribute("aria-label") or ""
+                        if ("react like" in aria_label.lower() and 
+                            "unreact" not in aria_label.lower() and
+                            any(name.lower() in aria_label.lower() for name in self.config.TARGET_NAMES)):
+                            
+                            all_like_buttons.append(btn)
+                            seen_elements.add(btn_id)
+                            logger.info(f" ✅ TARGET: '{aria_label[:50]}'")
+                    except:
+                        continue
         
             if not all_like_buttons:
-                logger.info(" No new targets found")
+                logger.info(" No targets found")
                 return True
         
-            #  EXECUTE LIKES WITH HUMAN-LIKE WAITS BETWEEN EACH!
             liked_count = 0
             for i, target_btn in enumerate(all_like_buttons):
                 try:
                     aria = target_btn.get_attribute("aria-label") or "Target"
                     logger.info(f" #{i+1}/{len(all_like_buttons)} → '{aria[:40]}'")
                 
-                    # Human behavior BEFORE clicking
                     human_mouse_move(self.driver, target_btn)
                     self.driver.execute_script("arguments[0].scrollIntoView({block:'center'});", target_btn)
                     human_sleep(2, 4)
-                
-                    #  HUMAN WAIT BEFORE CLICK (like reading comment)
                     human_comment_wait()
                 
-                    # SINGLE CLICK + VERIFICATION
                     self.driver.execute_script("arguments[0].click();", target_btn)
                     human_sleep(5, 8)
-                
-                    #  FINAL STATE CHECK
+                    
                     final_aria = target_btn.get_attribute("aria-label") or ""
-                    final_pressed = target_btn.get_attribute("aria-pressed")
-                    
-                    if ("unlike" in final_aria.lower() or 
-                        final_pressed == "true"):
-                        logger.info(f" #{i+1} LIKED  (aria='{final_aria[:30]}')")
+                    if "unlike" in final_aria.lower():
+                        logger.info(f" #{i+1} ✅ LIKED!")
                         liked_count += 1
-                    else:
-                        logger.warning(f" #{i+1} UNCERTAIN (aria='{final_aria[:30]}')")
-                
-                    human_random_actions(self.driver)
                     
-                    #  CRITICAL: HUMAN WAIT BETWEEN COMMENTS!
+                    human_random_actions(self.driver)
                     if i < len(all_like_buttons) - 1:
-                        logger.info(f" Moving to next comment... (human pattern)")
                         human_comment_wait()
                     
                 except Exception as e:
                     logger.warning(f"#{i+1} error: {str(e)[:40]}")
-                    # Still wait even if error
-                    if i < len(all_like_buttons) - 1:
-                        human_comment_wait()
                     continue
         
-            logger.info(f" FINAL: {liked_count}/{len(all_like_buttons)} TARGETS LIKED!")
+            logger.info(f" 🎉 {liked_count}/{len(all_like_buttons)} TARGETS LIKED!")
             return liked_count > 0
 
         except Exception as e:
             logger.error(f"Comments error: {str(e)[:80]}")
             return False
 
-
     def close(self):
         human_sleep(2, 4)
         if self.driver:
             self.driver.quit()
-            logger.info(" Session closed")
+            logger.info(" ✅ Session closed")
 
-# ==================== OPERATOR-CONTROLLED BOT ====================
+# ==================== MAIN BOT ====================
 class LinkedInCommentLiker:
     def __init__(self, config):
         global logger
         self.config = config
-        if logger is None: logger = setup_logger(config.LOG_FILE)
+        if logger is None: 
+            logger = setup_logger(config.LOG_FILE)
         self.selenium = None
 
     def initialize(self):
@@ -497,32 +427,35 @@ class LinkedInCommentLiker:
         self.selenium.login()
 
     def run(self):
-        handler = GoogleSheetHandler(self.config.GOOGLECREDENTIALSFILE, self.config.GOOGLESHEETURL)
+        # ✅ FIXED ATTRIBUTE ERRORS
+        handler = GoogleSheetHandler(
+            self.config.GOOGLE_CREDENTIALS_FILE,  # ✅ FIXED
+            self.config.GOOGLE_SHEET_URL          # ✅ FIXED
+        )
         rows = handler.readfile()
         if not rows:
-            logger.error("No data found or sheet access failed!")
+            logger.error("❌ No data found or sheet access failed!")
             return
     
-        # Mode selection with safe headers
+        # Operator mode control
         if self.config.MODE == "new11":
-            logger.info("🎯 Mode: new11 (👤 Personal Profile (New11-GSHEET.py))")
+            logger.info("🎯 Mode: new11 (👤 Personal Profile)")
             use_company_switch = False
         elif self.config.MODE == "13":
-            logger.info("🎯 Mode: 13 (🏢 Company Page (13.py))")
+            logger.info("🎯 Mode: 13 (🏢 Company Page)")
             use_company_switch = True
         else:
-            # Safe auto-detect
             try:
                 headers = handler.sheet.row_values(1) if handler.sheet else []
                 if any("glaztower" in str(h).lower() for h in headers):
                     use_company_switch = False
-                    logger.info("AUTO-DETECTED New11-GSHEET Personal")
+                    logger.info("🔍 AUTO-DETECTED: Personal mode")
                 else:
                     use_company_switch = True
-                    logger.info("AUTO-DETECTED 13.py Company")
+                    logger.info("🔍 AUTO-DETECTED: Company mode")
             except:
-                logger.warning("Auto-detect failed - defaulting to Personal")
                 use_company_switch = False
+        
         processed = 0
         for i, row in enumerate(rows):
             post_url = str(row.get("Post Url") or row.get("Post") or "").strip()
@@ -533,7 +466,7 @@ class LinkedInCommentLiker:
                 continue
 
             logger.info(f"\n{'='*90}")
-            logger.info(f" [{i+1}/{len(rows)}] {target_name}")
+            logger.info(f" [{i+1}/{len(rows)}] 🎯 {target_name}")
             logger.info(f" 📎 URL: {post_url[:70]}...")
             logger.info(f"{'='*90}")
 
@@ -541,14 +474,12 @@ class LinkedInCommentLiker:
                 self.selenium.driver.get(post_url)
                 human_sleep(8, 12)
 
-                # Scroll to comments section
                 self.selenium.driver.execute_script("""
                     document.querySelectorAll('.comments-container, [role="main"]')
                     .forEach(el => el.scrollIntoView({block: 'center'}));
                 """)
                 human_sleep(4, 6)
 
-                # 🎯 OPERATOR MODE LOGIC
                 company_switched = False
                 if use_company_switch and self.config.COMPANY_PAGE_NAME:
                     company_switched = self.selenium.switch_to_company_page()
@@ -560,7 +491,6 @@ class LinkedInCommentLiker:
                 human_pause()
                 target_liked = self.selenium.like_comment()
 
-                # Status based on results
                 if target_liked and post_liked:
                     status = f"{profile_type}:{target_name}"
                 elif post_liked:
