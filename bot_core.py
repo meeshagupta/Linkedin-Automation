@@ -14,13 +14,12 @@ from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.common.action_chains import ActionChains
 from webdriver_manager.chrome import ChromeDriverManager
 from webdriver_manager.core.os_manager import ChromeType
-import json
 import os
 
 # ==================== OPERATOR-CONTROLLED CONFIG ====================
 class BotConfig:
     def __init__(self, linkedin_email, linkedin_password, google_sheet_url, company_page_name, 
-                 google_credentials_file, headless_mode=False, log_file="bot_logs.txt", mode="auto"):
+                 google_credentials_file, headless_mode=False, log_file="/tmp/bot_logs.txt", mode="auto"):
         self.LINKEDIN_EMAIL = linkedin_email
         self.LINKEDIN_PASSWORD = linkedin_password
         self.GOOGLE_CREDENTIALS_FILE = google_credentials_file  # ✅ FIXED
