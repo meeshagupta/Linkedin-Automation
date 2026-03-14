@@ -1,4 +1,4 @@
-# bot_core.py - PRODUCTION READY FOR STREAMLIT CLOUD + GITHUB
+# bot_core.py - PRODUCTION READY FOR STREAMLIT CLOUD + GITHUB (ALL FIXES)
 import time
 import random
 import logging
@@ -144,9 +144,8 @@ class LinkedInSeleniumClient:
         self.setup_driver()
 
     def setup_driver(self):
-        """✅ PRODUCTION READY - Streamlit Cloud FIRST"""
+        """🔥 BULLETPROOF - Works EVERYWHERE (Streamlit Cloud + Local)"""
         options = Options()
-        # ✅ FIX 1: RESPECT self.headless (app toggle)
         if self.headless:
             options.add_argument("--headless=new")
         options.add_argument("--no-sandbox")
@@ -157,35 +156,36 @@ class LinkedInSeleniumClient:
         options.add_experimental_option("excludeSwitches", ["enable-automation"])
         options.add_experimental_option('useAutomationExtension', False)
 
-        # ✅ FIX 2: STREAMLIT CLOUD PATHS FIRST
+        # TRY SYSTEM CHROMIUM FIRST (Streamlit Cloud)
         driver_paths = [
-            "/usr/bin/chromedriver",           # Streamlit Cloud #1 ✅
-            "/usr/lib/chromium-browser/chromedriver",  # Streamlit Cloud #2 ✅
+            "/usr/bin/chromedriver",                    # Streamlit Cloud #1 ✅
+            "/usr/bin/chromium-browser",                # Streamlit Cloud #2 ✅
+            "/usr/lib/chromium-browser/chromedriver",   # Streamlit Cloud #3 ✅
             ChromeDriverManager(chrome_type=ChromeType.CHROMIUM).install(),
-            ChromeDriverManager().install(),   # Local fallback ✅
+            ChromeDriverManager().install()             # Local fallback ✅
         ]
         
         self.driver = None
-        for attempt, driver_path in enumerate(driver_paths, 1):
+        for attempt, path in enumerate(driver_paths, 1):
             try:
-                logger.info(f"🔄 Attempt {attempt}: {str(driver_path)[:50]}...")
-                service = Service(driver_path)
+                logger.info(f"🔄 [{attempt}/5] Trying: {str(path)[:40]}...")
+                service = Service(executable_path=path)
                 self.driver = webdriver.Chrome(service=service, options=options)
-                logger.info(f"✅ ATTEMPT {attempt} SUCCESS!")
+                logger.info(f"✅ [{attempt}/5] DRIVER READY!")
                 break
             except Exception as e:
-                logger.warning(f"❌ Attempt {attempt} failed: {str(e)[:60]}")
+                logger.warning(f"❌ [{attempt}/5] Failed: {str(e)[:50]}")
                 continue
         
         if not self.driver:
-            raise Exception("❌ NO CHROMEDRIVER FOUND - Check packages.txt")
+            raise Exception("❌ NO WORKING DRIVER - Check packages.txt has 'chromium chromium-driver xvfb'")
         
         # Stealth (only if driver exists)
         self.driver.execute_cdp_cmd('Page.addScriptToEvaluateOnNewDocument', {
             'source': 'Object.defineProperty(navigator, "webdriver", {get: () => undefined});'
         })
         self.driver.implicitly_wait(15)
-        logger.info("🚀 PRODUCTION STEALTH READY!")
+        logger.info("🚀 STEALTH MODE ACTIVATED!")
 
     def login(self):
         try:
@@ -235,9 +235,15 @@ class LinkedInSeleniumClient:
             raise
 
     def switch_to_company_page(self):
-        """EXACT FULL PHRASE MATCH"""
+        """✅ FIXED: NULL CHECK + No split() crash"""
         try:
-            logger.info("🏢 Opening company switcher...")
+            # ✅ FIX 1: NULL CHECK FOR PERSONAL MODE
+            if not self.config.COMPANY_PAGE_NAME:
+                logger.warning("🏢 No company name provided - skipping switch (Personal mode)")
+                return False
+                
+            company_name = self.config.COMPANY_PAGE_NAME
+            logger.info(f"🏢 Opening company switcher for: '{company_name}'")
             human_sleep(8, 12)
 
             circle_btn = WebDriverWait(self.driver, 15).until(
@@ -246,9 +252,6 @@ class LinkedInSeleniumClient:
             self.driver.execute_script("arguments[0].click();", circle_btn)
             human_sleep(4, 6)
 
-            company_name = self.config.COMPANY_PAGE_NAME
-            logger.info(f" 🔍 Hunting EXACT: '{company_name}'")
-        
             exact_selectors = [
                 f"//li[.//text()[normalize-space()='{company_name}']]",
                 f"//div[.//text()[normalize-space()='{company_name}']]",
