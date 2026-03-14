@@ -132,113 +132,7 @@ class GoogleSheetHandler:
         except Exception as e:
             logger.error(f" ❌ Status update failed: {e}")
 
-
-# ==================== RUNTIME CHROME INSTALLER ====================
-def find_playwright_chrome():
-    """Find Chrome binary downloaded by Playwright in its cache directory."""
-    import glob
-    search_roots = [
-        "/home/appuser/.cache/ms-playwright",
-        "/home/adminuser/.cache/ms-playwright",
-        "/root/.cache/ms-playwright",
-        os.path.expanduser("~/.cache/ms-playwright"),
-    ]
-    patterns = [
-        "*/chrome-linux64/chrome",
-        "*/chrome-linux/chrome",
-        "*/chromium-*/chrome-linux/chrome",
-    ]
-    for root in search_roots:
-        for pattern in patterns:
-            matches = glob.glob(os.path.join(root, pattern))
-            if matches:
-                binary = matches[0]
-                logger.info(f"✅ Found Playwright Chrome at: {binary}")
-                return binary
-    return None
-
-
-def find_playwright_chromedriver():
-    """Find chromedriver downloaded by Playwright."""
-    import glob
-    search_roots = [
-        "/home/appuser/.cache/ms-playwright",
-        "/home/adminuser/.cache/ms-playwright",
-        "/root/.cache/ms-playwright",
-        os.path.expanduser("~/.cache/ms-playwright"),
-    ]
-    patterns = [
-        "*/chromedriver-linux64/chromedriver",
-        "*/chromedriver-linux/chromedriver",
-        "*/chromium-*/chromedriver",
-    ]
-    for root in search_roots:
-        for pattern in patterns:
-            matches = glob.glob(os.path.join(root, pattern))
-            if matches:
-                driver = matches[0]
-                logger.info(f"✅ Found Playwright chromedriver at: {driver}")
-                return driver
-    return None
-
-
-def ensure_chrome_installed():
-    """
-    Install Chrome at runtime. packages.txt is ignored on Streamlit Cloud.
-    Uses Playwright as primary method since sudo/apt is blocked.
-    """
-    import subprocess
-    import urllib.request
-
-    # Already installed as system Chrome?
-    system_paths = [
-        "/usr/bin/chromium-browser", "/usr/bin/chromium",
-        "/usr/bin/google-chrome", "/usr/bin/google-chrome-stable",
-    ]
-    if any(os.path.exists(p) for p in system_paths):
-        logger.info("✅ System Chrome already installed — skipping")
-        return
-
-    # Already installed via Playwright?
-    if find_playwright_chrome():
-        logger.info("✅ Playwright Chrome already present — skipping install")
-        return
-
-    logger.info("🌐 Chrome not found — installing via Playwright (no sudo needed)...")
-
-    def run_cmd(cmd, timeout=300):
-        try:
-            result = subprocess.run(
-                cmd, shell=True, capture_output=True, text=True, timeout=timeout
-            )
-            out = (result.stdout or "").strip()
-            err = (result.stderr or "").strip()
-            if out:
-                logger.info(f"  {out[:300]}")
-            if err and result.returncode != 0:
-                logger.warning(f"  {err[:200]}")
-            return result.returncode == 0
-        except Exception as e:
-            logger.warning(f"  cmd error: {str(e)[:100]}")
-            return False
-
-    # Playwright install — no sudo needed, downloads to user home
-    logger.info("📦 Installing Playwright + Chromium (no sudo required)...")
-    run_cmd("pip install playwright -q", timeout=120)
-    # CHROMIUM_SKIP_VALIDATE_HOST_REQUIREMENTS skips the sudo deps check
-    env_prefix = "PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=0 "
-    run_cmd(
-        "python -m playwright install chromium",
-        timeout=600
-    )
-    if find_playwright_chrome():
-        logger.info("✅ Playwright Chromium installed successfully!")
-        return
-
-    logger.error("❌ Could not install Chrome. Streamlit Cloud blocks all install methods.")
-
 # ==================== SELENIUM CLIENT ====================
-
 class LinkedInSeleniumClient:
     def __init__(self, email, password, headless=False, config=None):
         self.email = email
@@ -249,10 +143,9 @@ class LinkedInSeleniumClient:
         self.setup_driver()
 
     def setup_driver(self):
-        """🔥 BULLETPROOF - Works EVERYWHERE (Streamlit Cloud + Local)"""
+        """Clean Render/Docker setup — Chrome installed via Dockerfile apt-get."""
         options = Options()
-        if self.headless:
-            options.add_argument("--headless=new")
+        options.add_argument("--headless=new")
         options.add_argument("--no-sandbox")
         options.add_argument("--disable-dev-shm-usage")
         options.add_argument("--disable-gpu")
@@ -260,43 +153,34 @@ class LinkedInSeleniumClient:
         options.add_argument("--disable-blink-features=AutomationControlled")
         options.add_argument("--user-agent=Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36")
         options.add_experimental_option("excludeSwitches", ["enable-automation"])
-        options.add_experimental_option('useAutomationExtension', False)
+        options.add_experimental_option("useAutomationExtension", False)
 
-        # ── Find Chrome binary: system first, then Playwright cache ──
-        system_binaries = [
-            "/usr/bin/chromium-browser",
+        # Chrome binary — set by Dockerfile ENV or found at known apt paths
+        chrome_candidates = [
+            os.environ.get("CHROME_BIN", ""),
             "/usr/bin/chromium",
+            "/usr/bin/chromium-browser",
             "/usr/bin/google-chrome-stable",
             "/usr/bin/google-chrome",
         ]
-        chrome_bin = next((p for p in system_binaries if os.path.exists(p)), None)
-        if not chrome_bin:
-            chrome_bin = find_playwright_chrome()  # Playwright downloaded Chrome
-
+        chrome_bin = next((p for p in chrome_candidates if p and os.path.exists(p)), None)
         if chrome_bin:
             options.binary_location = chrome_bin
-            logger.info(f"✅ Using Chrome binary: {chrome_bin}")
+            logger.info(f"✅ Chrome binary: {chrome_bin}")
         else:
-            logger.warning("⚠️ No Chrome binary found — driver will try auto-detect")
+            logger.warning("⚠️ Chrome binary not found — driver will attempt auto-detect")
 
-        # ── Find chromedriver ──
+        # ChromeDriver — set by Dockerfile ENV or found at known apt paths
         def get_driver_paths():
-            # 1. Standard system paths
-            for p in [
+            candidates = [
+                os.environ.get("CHROMEDRIVER_PATH", ""),
                 "/usr/bin/chromedriver",
-                "/usr/lib/chromium-browser/chromedriver",
                 "/usr/lib/chromium/chromedriver",
-                "/snap/bin/chromium.chromedriver",
-            ]:
-                if os.path.exists(p):
+                "/usr/lib/chromium-browser/chromedriver",
+            ]
+            for p in candidates:
+                if p and os.path.exists(p):
                     yield p
-
-            # 2. Playwright chromedriver (matches Playwright Chrome version exactly)
-            pw_driver = find_playwright_chromedriver()
-            if pw_driver:
-                yield pw_driver
-
-            # 3. webdriver-manager as last resort
             try:
                 path = ChromeDriverManager(chrome_type=ChromeType.CHROMIUM).install()
                 if path:
@@ -313,28 +197,23 @@ class LinkedInSeleniumClient:
         self.driver = None
         for attempt, path in enumerate(get_driver_paths(), 1):
             try:
-                logger.info(f"🔄 [attempt {attempt}] Trying: {str(path)[:60]}...")
+                logger.info(f"🔄 [attempt {attempt}] Trying chromedriver: {path}")
                 service = Service(executable_path=path)
                 self.driver = webdriver.Chrome(service=service, options=options)
-                logger.info(f"✅ [attempt {attempt}] DRIVER READY with: {path}")
+                logger.info(f"✅ Driver ready!")
                 break
             except Exception as e:
                 logger.warning(f"❌ [attempt {attempt}] Failed: {str(e)[:80]}")
                 continue
 
         if not self.driver:
-            raise Exception(
-                "❌ NO WORKING CHROMEDRIVER FOUND.\n"
-                "Ensure your packages.txt (not package.txt!) contains:\n"
-                "  chromium\n  chromium-driver\n  xvfb"
-            )
-        
-        # Stealth (only if driver exists)
-        self.driver.execute_cdp_cmd('Page.addScriptToEvaluateOnNewDocument', {
-            'source': 'Object.defineProperty(navigator, "webdriver", {get: () => undefined});'
+            raise Exception("❌ Chrome/ChromeDriver not found. Check Dockerfile build logs.")
+
+        self.driver.execute_cdp_cmd("Page.addScriptToEvaluateOnNewDocument", {
+            "source": "Object.defineProperty(navigator, 'webdriver', {get: () => undefined});"
         })
         self.driver.implicitly_wait(15)
-        logger.info("🚀 STEALTH MODE ACTIVATED!")
+        logger.info("🚀 Stealth mode activated!")
 
     def login(self):
         try:
