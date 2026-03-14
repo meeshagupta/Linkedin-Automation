@@ -1,6 +1,6 @@
 import streamlit as st
 import os
-from bot_core import BotConfig, LinkedInCommentLiker
+from bot_core import BotConfig, LinkedInCommentLiker, LinkedInVerificationRequired, clear_cookies
 
 st.set_page_config(page_title="LinkedIn Bot", layout="wide")
 
@@ -164,11 +164,21 @@ if st.session_state.running and creds_file and st.session_state.profile_mode:
                 st.rerun()
 
             elif st.session_state.bot_step == "login":
-                st.session_state.bot.initialize()
-                st.session_state.logs.append("✅ Login successful!")
-                st.session_state.bot_status = "🔄 Processing posts..."
-                st.session_state.bot_step = "run_bot"
-                st.rerun()
+                try:
+                    st.session_state.bot.initialize()
+                    st.session_state.logs.append("✅ Login successful! (session saved)")
+                    st.session_state.bot_status = "🔄 Processing posts..."
+                    st.session_state.bot_step = "run_bot"
+                    st.rerun()
+                except LinkedInVerificationRequired:
+                    st.session_state.logs.append("📧 LinkedIn sent a verification code to your email!")
+                    st.session_state.logs.append("👇 Enter the code below to continue...")
+                    st.session_state.bot_status = "⏳ Waiting for verification code..."
+                    st.session_state.bot_step = "verify_input"
+                    st.rerun()
+
+            elif st.session_state.bot_step == "verify_input":
+                pass  # UI below handles this step
 
             elif st.session_state.bot_step == "run_bot":
                 st.session_state.logs.append("📊 Processing posts...")
@@ -189,6 +199,45 @@ if st.session_state.running and creds_file and st.session_state.profile_mode:
             # above to NOT trigger on next START, so steps were silently skipped.
             st.session_state.pop("bot_step", None)
             st.rerun()
+
+# ==================== VERIFICATION CODE INPUT ====================
+if st.session_state.get("bot_step") == "verify_input":
+    st.markdown("---")
+    st.warning("### 📧 LinkedIn Verification Required!")
+    st.markdown(
+        "LinkedIn sent a **6-digit code** to your email address **" +
+        (email[:4] + "****" + email[email.find("@"):] if email and "@" in email else "your email") +
+        "**. Check your inbox (and spam folder) and enter it below."
+    )
+    col_v1, col_v2 = st.columns([2, 1])
+    with col_v1:
+        verify_code = st.text_input(
+            "🔑 Verification Code",
+            placeholder="e.g. 123456",
+            max_chars=8,
+            key="verify_code_input"
+        )
+    with col_v2:
+        st.write("")
+        st.write("")
+        if st.button("✅ Submit Code", type="primary", use_container_width=True):
+            if verify_code.strip():
+                with st.spinner("Verifying..."):
+                    try:
+                        st.session_state.bot.selenium.submit_verification_code(verify_code.strip())
+                        st.session_state.logs.append("✅ Verified! Session saved — no more codes needed!")
+                        st.session_state.bot_status = "🔄 Processing posts..."
+                        st.session_state.bot_step = "run_bot"
+                        st.rerun()
+                    except Exception as e:
+                        st.session_state.logs.append(f"❌ Wrong code or expired: {str(e)[:60]}")
+                        st.session_state.bot_status = "❌ Verification failed — try again"
+                        st.session_state.running = False
+                        st.session_state.pop("bot_step", None)
+                        st.rerun()
+            else:
+                st.warning("⚠️ Please enter the code first!")
+    st.markdown("---")
 
 # ==================== EMERGENCY STOP ====================
 if st.sidebar.button("💥 EMERGENCY STOP", type="secondary"):
@@ -231,6 +280,23 @@ with st.expander("📖 How to Use", expanded=False):
     """)
 
 # ==================== SIDEBAR STATUS ====================
+# Clear saved session button — forces fresh login next time
+if email:
+    st.sidebar.markdown("---")
+    st.sidebar.markdown("**🍪 Saved Session**")
+    import hashlib, os as _os
+    _cookie_path = f"/tmp/li_session_{hashlib.md5(email.encode()).hexdigest()[:12]}.json"
+    if _os.path.exists(_cookie_path):
+        st.sidebar.success("✅ Session saved — no verification needed!")
+        if st.sidebar.button("🗑️ Clear Saved Session", help="Force fresh login next time"):
+            clear_cookies(email)
+            st.sidebar.warning("Session cleared — next login will require verification")
+            st.rerun()
+    else:
+        st.sidebar.info("ℹ️ No saved session yet")
+        st.sidebar.caption("After first login + verification, session is saved automatically")
+
+
 if creds_file:
     st.sidebar.success("✅ Credentials file OK!")
     st.sidebar.caption(f"Mode: {profile_mode}")
