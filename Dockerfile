@@ -1,22 +1,26 @@
-# ── Base image: Python 3.11 on Debian (full apt access) ──
+# ── Base image ──
 FROM python:3.11-slim
 
-# ── Install Chrome + ChromeDriver + Xvfb via apt (works perfectly on Render) ──
+# ── Install Chrome + ChromeDriver + Xvfb ──
 RUN apt-get update && apt-get install -y \
     chromium \
     chromium-driver \
     xvfb \
-    wget \
     curl \
     gnupg \
     --no-install-recommends \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
-# ── Set environment variables so Selenium finds Chrome ──
+# ── Environment variables ──
 ENV CHROME_BIN=/usr/bin/chromium
 ENV CHROMEDRIVER_PATH=/usr/bin/chromedriver
 ENV DISPLAY=:99
+
+# ── Hugging Face Spaces runs as user 1000 (not root) ──
+RUN useradd -m -u 1000 appuser && \
+    mkdir -p /tmp && \
+    chmod 777 /tmp
 
 # ── Set working directory ──
 WORKDIR /app
@@ -28,13 +32,19 @@ RUN pip install --no-cache-dir -r requirements.txt
 # ── Copy app files ──
 COPY . .
 
-# ── Expose Streamlit port ──
-EXPOSE 8501
+# ── Give appuser ownership ──
+RUN chown -R appuser:appuser /app
 
-# ── Start Xvfb (virtual display) + Streamlit ──
+# ── Switch to non-root user (required by HF Spaces) ──
+USER appuser
+
+# ── Expose port 7860 (Hugging Face Spaces requirement) ──
+EXPOSE 7860
+
+# ── Start Xvfb + Streamlit on port 7860 ──
 CMD Xvfb :99 -screen 0 1920x1080x24 & \
     streamlit run app.py \
-    --server.port=8501 \
+    --server.port=7860 \
     --server.address=0.0.0.0 \
     --server.headless=true \
     --browser.gatherUsageStats=false
