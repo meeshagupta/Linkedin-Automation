@@ -20,11 +20,12 @@ if 'bot_status' not in st.session_state:
     st.session_state.logs = []
     st.session_state.running = False
     st.session_state.profile_mode = None
+    st.session_state.company_name = None
 
 # Title
 st.markdown('<h1 class="main-header">🤖 LinkedIn Dual-Mode Bot</h1>', unsafe_allow_html=True)
 
-# === PROFILE MODE SELECTION (NEW!) ===
+# === PROFILE MODE SELECTION ===
 col1, col2 = st.columns([1, 3])
 with col1:
     st.markdown('<div class="mode-card"><h3>👤 Profile Mode</h3></div>', unsafe_allow_html=True)
@@ -40,7 +41,8 @@ with col2:
 
 # Dynamic company name input
 if profile_mode == "🏢 Company Page (13.py)":
-    company_name = st.text_input("🏢 Company Page Name", value="Meeshu automation", help="Exact company page name from dropdown")
+    company_name = st.text_input("🏢 Company Page Name", value="Meeshu automation", 
+                               help="Exact company page name from dropdown")
 else:
     company_name = ""
 
@@ -48,8 +50,12 @@ else:
 st.sidebar.header("🔐 Login Credentials")
 email = st.sidebar.text_input("LinkedIn Email", value="shruti.shar10@gmail.com")
 password = st.sidebar.text_input("LinkedIn Password", type="password", value="PSabcD@123456!")
-sheet_url = st.sidebar.text_input("Google Sheet URL", value="https://docs.google.com/spreadsheets/d/17bwCB8vbuo96tVHrW6bsBk2sFVd5CSIgYWy1LmofF2k/edit")
+sheet_url = st.sidebar.text_input("Google Sheet URL", 
+                                value="https://docs.google.com/spreadsheets/d/17bwCB8vbuo96tVHrW6bsBk2sFVd5CSIgYWy1LmofF2k/edit")
 creds_file = st.sidebar.file_uploader("📄 Google Service Account JSON", type="json")
+
+# Headless toggle
+headless_mode = st.sidebar.checkbox("🖥️ Headless Mode (No browser window)", value=True)
 
 # Main Status Display
 col1, col2 = st.columns([3, 1])
@@ -66,7 +72,7 @@ with col2:
     with col_btn1:
         if st.button("🚀 START BOT", use_container_width=True, type="primary") and creds_file:
             st.session_state.profile_mode = profile_mode
-            st.session_state.company_name = company_name
+            st.session_state.company_name = company_name if company_name else None
             st.session_state.running = True
             st.session_state.bot_status = "🔄 Initializing..."
             st.rerun()
@@ -75,6 +81,7 @@ with col2:
         if st.button("🛑 STOP", use_container_width=True):
             st.session_state.running = False
             st.session_state.bot_status = "🛑 Stopped"
+            st.session_state.logs = []
             st.rerun()
 
 # Live Logs
@@ -82,82 +89,116 @@ st.subheader("📋 Live Logs")
 log_container = st.container(height=500)
 with log_container:
     if st.session_state.logs:
-        for log in st.session_state.logs[-15:]:
+        for log in st.session_state.logs[-20:]:
             st.text(log)
+    else:
+        st.info("👈 Click START BOT to begin...")
 
-# === BOT EXECUTION (MODE-AWARE) ===
-if st.session_state.running and creds_file and st.session_state.profile_mode:
+# === BOT EXECUTION (MODE-AWARE) - FIXED ===
+if (st.session_state.running and 
+    creds_file and 
+    st.session_state.profile_mode):
+
     with log_container:
+        st.info("🚀 Starting bot execution...")
+        
         try:
-            # Save credentials
-            creds_path = "temp_creds.json"
-            with open(creds_path, "wb") as f:
+            # 1. Save temp credentials
+            credspath = "tempcreds.json"
+            with open(credspath, "wb") as f:
                 f.write(creds_file.getvalue())
             st.session_state.logs.append("✅ Credentials saved")
-            
-            # Set mode based on selection
+            st.rerun()
+
+            # 2. Set EXPLICIT MODE (CRITICAL FIX)
             if "Personal Profile (New11-GSHEET.py)" in st.session_state.profile_mode:
                 bot_mode = "new11"
+                mode_display = "👤 Personal Profile (New11-GSHEET.py)"
             else:
                 bot_mode = "13"
-
-            st.session_state.logs.append(f"🎯 Mode: {bot_mode} ({st.session_state.profile_mode})")
+                mode_display = "🏢 Company Page (13.py)"
             
-            # Create config with mode
+            st.session_state.logs.append(f"🎯 Mode: {bot_mode} ({mode_display})")
+            st.rerun()
+
+            # 3. Create config with EXPLICIT MODE
             config = BotConfig(
                 linkedin_email=email,
                 linkedin_password=password,
                 google_sheet_url=sheet_url,
-                company_page_name=st.session_state.company_name or "Personal",
-                google_credentials_file=creds_path,
-                mode=bot_mode  # PASS MODE TO BOT!
+                company_page_name=st.session_state.company_name,
+                google_credentials_file=credspath,
+                headless_mode=headless_mode,
+                mode=bot_mode  # This prevents NoneType error!
             )
-            
             st.session_state.logs.append("🤖 Initializing bot...")
+            st.rerun()
+
+            # 4. Initialize and run bot
             bot = LinkedInCommentLiker(config)
+            st.session_state.logs.append("🔐 Logging into LinkedIn...")
             bot.initialize()
-            
-            st.session_state.bot_status = "⚡ Running..."
-            st.session_state.logs.append("🚀 Bot started!")
-            
-            # Run with selected mode
+            st.session_state.logs.append("✅ Bot login successful!")
+            st.session_state.bot_status = "🔄 Processing posts..."
+            st.rerun()
+
+            st.session_state.logs.append("📊 Starting post processing...")
             bot.run()
             
             st.session_state.bot_status = "✅ COMPLETED!"
-            st.session_state.logs.append("🎉 Mission complete!")
+            st.session_state.logs.append("🎉 Mission complete! Check your Google Sheet for results.")
             st.session_state.running = False
-            
+            st.rerun()
+
         except Exception as e:
-            error_msg = str(e)[:100]
+            error_msg = str(e)[:150]
             st.session_state.bot_status = f"❌ ERROR: {error_msg}"
             st.session_state.logs.append(f"❌ Error: {error_msg}")
             st.session_state.running = False
-        st.rerun()
+            st.rerun()
 
 # Instructions
 with st.expander("📖 How to Use", expanded=True):
     st.markdown("""
     ### 🎮 **Step-by-Step:**
     1. **Choose Profile Mode** 👆 (Personal = New11 | Company = 13.py)
-    2. **Enter Company Name** (if Company mode)
-    3. **Fill credentials** (pre-filled)
-    4. **Upload** `credentials.json`
+    2. **Enter Company Name** (if Company mode - exact name from LinkedIn dropdown)
+    3. **Fill credentials** (pre-filled for testing)
+    4. **Upload** `credentials.json` (Google Service Account with Sheets API enabled)
     5. **Click START BOT** 🚀
-    
+
     ### 🔍 **What Each Mode Does:**
     | Mode | Script | Profile | Company Switch |
     |------|--------|---------|----------------|
     | 👤 **Personal** | New11-GSHEET.py | ✅ Personal only | ❌ No switch |
     | 🏢 **Company** | 13.py | ✅ Both (tries company first) | ✅ Switches to company |
-    
-    ### ✅ **Expected Results:**
+
+    ### ✅ **Expected Results in Google Sheet:**
     ```
     Personal: PERSONAL:Glaztower
     Company:  COMPANY:Glaztower  
+    POST_ONLY, FAILED also possible
     ```
+
+    ### 📝 **Google Sheet Format:**
+    ```
+    Post Url | Name | Status
+    https://... | Glaztower | [Bot fills this]
+    ```
+
+    **💡 Pro Tip:** Bot targets comments from your TARGET_NAMES list in bot_core.py (Glaztower, etc.)
     """)
 
 # Debug info
 if creds_file:
     st.sidebar.success("✅ Credentials OK!")
     st.sidebar.caption(f"Mode detected: {profile_mode}")
+else:
+    st.sidebar.warning("⚠️ Upload credentials.json")
+
+# Clean temp files on stop
+if not st.session_state.running and os.path.exists("tempcreds.json"):
+    try:
+        os.remove("tempcreds.json")
+    except:
+        pass
