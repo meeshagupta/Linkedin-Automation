@@ -136,11 +136,11 @@ class GoogleSheetHandler:
 # ==================== RUNTIME CHROME INSTALLER ====================
 def ensure_chrome_installed():
     """
-    Install Chrome/Chromium at runtime.
-    packages.txt is ignored on newer Streamlit Cloud builds — this is the reliable fix.
-    Runs BEFORE driver setup. Skips if already installed.
+    Install Chrome at runtime using sudo + urllib (no wget, no root needed directly).
+    packages.txt is ignored on Streamlit Cloud — this is the only reliable fix.
     """
     import subprocess
+    import urllib.request
 
     check_paths = [
         "/usr/bin/chromium-browser",
@@ -150,48 +150,82 @@ def ensure_chrome_installed():
     ]
 
     if any(os.path.exists(p) for p in check_paths):
-        logger.info("✅ Chrome/Chromium already installed — skipping")
+        logger.info("✅ Chrome already installed — skipping")
         return
 
     logger.info("🌐 Chrome not found — starting runtime install...")
 
-    def run(cmd, timeout=300):
-        result = subprocess.run(
-            cmd, shell=True, capture_output=True, text=True, timeout=timeout
-        )
-        if result.stdout.strip():
-            logger.info(result.stdout.strip()[:200])
-        if result.stderr.strip():
-            logger.warning(result.stderr.strip()[:200])
-        return result.returncode == 0
+    def run_cmd(cmd, timeout=300):
+        """Run shell command, return (success, stdout, stderr)"""
+        try:
+            result = subprocess.run(
+                cmd, shell=True, capture_output=True, text=True, timeout=timeout
+            )
+            out = result.stdout.strip()
+            err = result.stderr.strip()
+            if out:
+                logger.info(f"  {out[:300]}")
+            if err and result.returncode != 0:
+                logger.warning(f"  {err[:300]}")
+            return result.returncode == 0
+        except Exception as e:
+            logger.warning(f"  cmd error: {str(e)[:100]}")
+            return False
 
-    # ── METHOD 1: Direct Google Chrome .deb (most reliable in containers) ──
-    logger.info("📦 Method 1: Downloading Google Chrome stable .deb...")
-    ok = run("wget -q -O /tmp/chrome.deb https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb", timeout=120)
-    if ok:
-        run("apt-get install -y -qq /tmp/chrome.deb || apt-get install -y -qq -f")
-        if any(os.path.exists(p) for p in check_paths):
-            logger.info("✅ Google Chrome installed via .deb!")
-            # Install matching chromedriver
-            run("apt-get install -y -qq chromium-chromedriver || true")
-            return
-
-    # ── METHOD 2: apt-get chromium-browser ──
-    logger.info("📦 Method 2: apt-get chromium-browser...")
-    run("apt-get update -qq")
-    run("apt-get install -y -qq chromium-browser chromium-chromedriver")
-    if any(os.path.exists(p) for p in check_paths):
+    # ── METHOD 1: sudo apt-get chromium-browser (Ubuntu) ──
+    logger.info("📦 Method 1: sudo apt-get chromium-browser...")
+    run_cmd("sudo apt-get update -qq", timeout=120)
+    ok = run_cmd("sudo apt-get install -y -qq chromium-browser chromium-chromedriver", timeout=300)
+    if ok and any(os.path.exists(p) for p in check_paths):
         logger.info("✅ Chromium installed via apt-get!")
         return
 
-    # ── METHOD 3: apt-get chromium (Debian name) ──
-    logger.info("📦 Method 3: apt-get chromium...")
-    run("apt-get install -y -qq chromium chromium-driver")
-    if any(os.path.exists(p) for p in check_paths):
+    # ── METHOD 2: sudo apt-get chromium (Debian name) ──
+    logger.info("📦 Method 2: sudo apt-get chromium...")
+    ok = run_cmd("sudo apt-get install -y -qq chromium chromium-driver", timeout=300)
+    if ok and any(os.path.exists(p) for p in check_paths):
         logger.info("✅ Chromium (Debian) installed!")
         return
 
-    logger.error("❌ ALL install methods failed — Chrome cannot be found or installed")
+    # ── METHOD 3: Download Google Chrome .deb via Python urllib (no wget needed) ──
+    logger.info("📦 Method 3: Downloading Google Chrome .deb via Python urllib...")
+    chrome_url = "https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb"
+    deb_path = "/tmp/google-chrome.deb"
+    try:
+        logger.info(f"  Downloading from {chrome_url}...")
+        urllib.request.urlretrieve(chrome_url, deb_path)
+        logger.info(f"  Download complete — installing .deb...")
+        run_cmd(f"sudo apt-get install -y -qq {deb_path}", timeout=300)
+        run_cmd("sudo apt-get install -y -qq -f", timeout=120)  # fix broken deps
+        if any(os.path.exists(p) for p in check_paths):
+            logger.info("✅ Google Chrome installed via .deb!")
+            return
+    except Exception as e:
+        logger.warning(f"  .deb download/install failed: {str(e)[:150]}")
+
+    # ── METHOD 4: pip install playwright as absolute last resort ──
+    logger.info("📦 Method 4: Trying playwright chromium...")
+    try:
+        run_cmd("pip install playwright -q", timeout=120)
+        run_cmd("python -m playwright install chromium", timeout=300)
+        run_cmd("python -m playwright install-deps chromium", timeout=300)
+        pw_paths = [
+            os.path.expanduser("~/.cache/ms-playwright"),
+            "/root/.cache/ms-playwright",
+            "/home/adminuser/.cache/ms-playwright",
+        ]
+        for pw_path in pw_paths:
+            if os.path.exists(pw_path):
+                logger.info(f"✅ Playwright chromium found at {pw_path}")
+                return
+    except Exception as e:
+        logger.warning(f"  Playwright failed: {str(e)[:100]}")
+
+    logger.error(
+        "❌ ALL install methods failed.\n"
+        "The Streamlit Cloud container does not allow installing Chrome.\n"
+        "Consider deploying on a VPS (Railway, Render, EC2) instead."
+    )
 
 # ==================== SELENIUM CLIENT ====================
 class LinkedInSeleniumClient:
@@ -205,7 +239,6 @@ class LinkedInSeleniumClient:
 
     def setup_driver(self):
         """🔥 BULLETPROOF - Works EVERYWHERE (Streamlit Cloud + Local)"""
-        # Install Chrome at runtime if missing (packages.txt ignored on Streamlit Cloud)
         ensure_chrome_installed()
         options = Options()
         if self.headless:
