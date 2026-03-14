@@ -94,68 +94,81 @@ with log_container:
     else:
         st.info("👈 Click START BOT to begin...")
 
-# === BOT EXECUTION (MODE-AWARE) - FIXED ===
-if (st.session_state.running and 
-    creds_file and 
-    st.session_state.profile_mode):
+# === BOT EXECUTION (NON-BLOCKING) ===
+if (st.session_state.running and creds_file and st.session_state.profile_mode):
+    # SINGLE EXECUTION - NO REPEATED RERUNS
+    if "bot_step" not in st.session_state:
+        st.session_state.bot_step = "save_creds"
 
     with log_container:
-        st.info("🚀 Starting bot execution...")
-        
         try:
-            # 1. Save temp credentials
-            credspath = "tempcreds.json"
-            with open(credspath, "wb") as f:
-                f.write(creds_file.getvalue())
-            st.session_state.logs.append("✅ Credentials saved")
-            st.rerun()
+            if st.session_state.bot_step == "save_creds":
+                credspath = "tempcreds.json"
+                with open(credspath, "wb") as f:
+                    f.write(creds_file.getvalue())
+                st.session_state.logs.append("✅ Credentials saved")
+                st.session_state.bot_step = "set_mode"
+                st.rerun()
 
-            # 2. Set EXPLICIT MODE (CRITICAL FIX)
-            if "Personal Profile (New11-GSHEET.py)" in st.session_state.profile_mode:
-                bot_mode = "new11"
-                mode_display = "👤 Personal Profile (New11-GSHEET.py)"
-            else:
-                bot_mode = "13"
-                mode_display = "🏢 Company Page (13.py)"
-            
-            st.session_state.logs.append(f"🎯 Mode: {bot_mode} ({mode_display})")
-            st.rerun()
+            elif st.session_state.bot_step == "set_mode":
+                if "Personal Profile (New11-GSHEET.py)" in st.session_state.profile_mode:
+                    st.session_state.bot_mode = "new11"
+                else:
+                    st.session_state.bot_mode = "13"
+                st.session_state.logs.append(f"🎯 Mode: {st.session_state.bot_mode}")
+                st.session_state.bot_step = "init_bot"
+                st.rerun()
 
-            # 3. Create config with EXPLICIT MODE
-            config = BotConfig(
-                linkedin_email=email,
-                linkedin_password=password,
-                google_sheet_url=sheet_url,
-                company_page_name=st.session_state.company_name,
-                google_credentials_file=credspath,
-                headless_mode=headless_mode,
-                mode=bot_mode  # This prevents NoneType error!
-            )
-            st.session_state.logs.append("🤖 Initializing bot...")
-            st.rerun()
+            elif st.session_state.bot_step == "init_bot":
+                config = BotConfig(
+                    linkedin_email=email,
+                    linkedin_password=password,
+                    google_sheet_url=sheet_url,
+                    company_page_name=st.session_state.company_name,
+                    google_credentials_file="tempcreds.json",
+                    headless_mode=headless_mode,
+                    mode=st.session_state.bot_mode
+                )
+                st.session_state.config = config
+                st.session_state.logs.append("🤖 Initializing bot...")
+                st.session_state.bot_step = "create_bot"
+                st.rerun()
 
-            # 4. Initialize and run bot
-            bot = LinkedInCommentLiker(config)
-            st.session_state.logs.append("🔐 Logging into LinkedIn...")
-            bot.initialize()
-            st.session_state.logs.append("✅ Bot login successful!")
-            st.session_state.bot_status = "🔄 Processing posts..."
-            st.rerun()
+            elif st.session_state.bot_step == "create_bot":
+                st.session_state.bot = LinkedInCommentLiker(st.session_state.config)
+                st.session_state.logs.append("🔐 Logging into LinkedIn...")
+                st.session_state.bot_step = "login"
+                st.rerun()
 
-            st.session_state.logs.append("📊 Starting post processing...")
-            bot.run()
-            
-            st.session_state.bot_status = "✅ COMPLETED!"
-            st.session_state.logs.append("🎉 Mission complete! Check your Google Sheet for results.")
-            st.session_state.running = False
-            st.rerun()
+            elif st.session_state.bot_step == "login":
+                st.session_state.bot.initialize()
+                st.session_state.logs.append("✅ Login successful!")
+                st.session_state.bot_status = "🔄 Processing posts..."
+                st.session_state.bot_step = "run_bot"
+                st.rerun()
+
+            elif st.session_state.bot_step == "run_bot":
+                st.session_state.logs.append("📊 Processing posts...")
+                st.session_state.bot.run()
+                st.session_state.bot_status = "✅ COMPLETED!"
+                st.session_state.logs.append("🎉 Mission complete!")
+                st.session_state.running = False
+                st.session_state.bot_step = "done"
+                st.rerun()
 
         except Exception as e:
-            error_msg = str(e)[:150]
+            error_msg = str(e)[:100]
             st.session_state.bot_status = f"❌ ERROR: {error_msg}"
             st.session_state.logs.append(f"❌ Error: {error_msg}")
             st.session_state.running = False
+            st.session_state.bot_step = None
             st.rerun()
+
+if st.sidebar.button("💥 EMERGENCY STOP", type="secondary"):
+    for key in list(st.session_state.keys()):
+        del st.session_state[key]
+    st.rerun()
+
 
 # Instructions
 with st.expander("📖 How to Use", expanded=True):
