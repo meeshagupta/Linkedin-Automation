@@ -132,6 +132,67 @@ class GoogleSheetHandler:
         except Exception as e:
             logger.error(f" ❌ Status update failed: {e}")
 
+
+# ==================== RUNTIME CHROME INSTALLER ====================
+def ensure_chrome_installed():
+    """
+    Install Chrome/Chromium at runtime.
+    packages.txt is ignored on newer Streamlit Cloud builds — this is the reliable fix.
+    Runs BEFORE driver setup. Skips if already installed.
+    """
+    import subprocess
+
+    check_paths = [
+        "/usr/bin/chromium-browser",
+        "/usr/bin/chromium",
+        "/usr/bin/google-chrome",
+        "/usr/bin/google-chrome-stable",
+    ]
+
+    if any(os.path.exists(p) for p in check_paths):
+        logger.info("✅ Chrome/Chromium already installed — skipping")
+        return
+
+    logger.info("🌐 Chrome not found — starting runtime install...")
+
+    def run(cmd, timeout=300):
+        result = subprocess.run(
+            cmd, shell=True, capture_output=True, text=True, timeout=timeout
+        )
+        if result.stdout.strip():
+            logger.info(result.stdout.strip()[:200])
+        if result.stderr.strip():
+            logger.warning(result.stderr.strip()[:200])
+        return result.returncode == 0
+
+    # ── METHOD 1: Direct Google Chrome .deb (most reliable in containers) ──
+    logger.info("📦 Method 1: Downloading Google Chrome stable .deb...")
+    ok = run("wget -q -O /tmp/chrome.deb https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb", timeout=120)
+    if ok:
+        run("apt-get install -y -qq /tmp/chrome.deb || apt-get install -y -qq -f")
+        if any(os.path.exists(p) for p in check_paths):
+            logger.info("✅ Google Chrome installed via .deb!")
+            # Install matching chromedriver
+            run("apt-get install -y -qq chromium-chromedriver || true")
+            return
+
+    # ── METHOD 2: apt-get chromium-browser ──
+    logger.info("📦 Method 2: apt-get chromium-browser...")
+    run("apt-get update -qq")
+    run("apt-get install -y -qq chromium-browser chromium-chromedriver")
+    if any(os.path.exists(p) for p in check_paths):
+        logger.info("✅ Chromium installed via apt-get!")
+        return
+
+    # ── METHOD 3: apt-get chromium (Debian name) ──
+    logger.info("📦 Method 3: apt-get chromium...")
+    run("apt-get install -y -qq chromium chromium-driver")
+    if any(os.path.exists(p) for p in check_paths):
+        logger.info("✅ Chromium (Debian) installed!")
+        return
+
+    logger.error("❌ ALL install methods failed — Chrome cannot be found or installed")
+
 # ==================== SELENIUM CLIENT ====================
 class LinkedInSeleniumClient:
     def __init__(self, email, password, headless=False, config=None):
@@ -144,6 +205,8 @@ class LinkedInSeleniumClient:
 
     def setup_driver(self):
         """🔥 BULLETPROOF - Works EVERYWHERE (Streamlit Cloud + Local)"""
+        # Install Chrome at runtime if missing (packages.txt ignored on Streamlit Cloud)
+        ensure_chrome_installed()
         options = Options()
         if self.headless:
             options.add_argument("--headless=new")
@@ -157,12 +220,10 @@ class LinkedInSeleniumClient:
         options.add_experimental_option('useAutomationExtension', False)
 
         # ✅ FIX: Set chromium binary location explicitly for Streamlit Cloud
-        # Ubuntu (Streamlit Cloud) = chromium-browser
-        # Debian = chromium
         chromium_binaries = [
-            "/usr/bin/chromium-browser",   # Ubuntu (Streamlit Cloud) ✅
-            "/usr/bin/chromium",            # Debian
-            "/usr/lib/chromium/chromium",   # Debian alternative
+            "/usr/bin/chromium",
+            "/usr/bin/chromium-browser",
+            "/usr/lib/chromium/chromium",
         ]
         for binary in chromium_binaries:
             if os.path.exists(binary):
@@ -175,10 +236,10 @@ class LinkedInSeleniumClient:
         # when chromium is not in PATH, because the result (None) gets passed to Service().
         def get_driver_paths():
             static_paths = [
-                "/usr/bin/chromedriver",                    # Ubuntu (chromium-chromedriver pkg) ✅
-                "/usr/lib/chromium-browser/chromedriver",   # Ubuntu alternative ✅
-                "/usr/lib/chromium/chromedriver",           # Debian
-                "/snap/bin/chromium.chromedriver",          # Snap fallback
+                "/usr/bin/chromedriver",                  # Streamlit Cloud (chromium-driver pkg)
+                "/usr/lib/chromium/chromedriver",          # Debian alternative
+                "/usr/lib/chromium-browser/chromedriver",  # Ubuntu alternative
+                "/snap/bin/chromium.chromedriver",         # Snap install
             ]
             for p in static_paths:
                 if os.path.exists(p):
