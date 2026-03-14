@@ -92,14 +92,26 @@ def human_random_actions(driver):  # ADD THIS
 class GoogleSheetHandler:
     def __init__(self, credentials_file, sheet_url):
         scope = ['https://www.googleapis.com/auth/spreadsheets']
-        creds = Credentials.from_service_account_file(credentials_file, scopes=scope)
-        self.client = gspread.authorize(creds)
-        self.sheet = self.client.open_by_url(sheet_url).sheet1
+        try:
+            creds = Credentials.from_service_account_file(credentials_file, scopes=scope)
+            self.client = gspread.authorize(creds)
+            self.sheet = self.client.open_by_url(sheet_url).sheet1
+            logger.info("✅ Google Sheets connected successfully")
+        except Exception as e:
+            logger.error(f"❌ Google Sheets connection failed: {str(e)}")
+            self.sheet = None  # Explicitly set to None
 
-    def read_file(self):
-        records = self.sheet.get_all_records()
-        logger.info(f" 📊 Loaded {len(records)} rows from Google Sheets")
-        return records
+    def readfile(self):
+        if not self.sheet:
+            logger.error("No sheet available - check credentials/sheet URL")
+            return []
+        try:
+            records = self.sheet.get_all_records()
+            logger.info(f"Loaded {len(records)} rows from Google Sheets")
+            return records
+        except Exception as e:
+            logger.error(f"Read failed: {str(e)}")
+            return []
 
     def update_status(self, row_index, status):
         try:
@@ -485,30 +497,32 @@ class LinkedInCommentLiker:
         self.selenium.login()
 
     def run(self):
-        handler = GoogleSheetHandler(self.config.GOOGLE_CREDENTIALS_FILE, self.config.GOOGLE_SHEET_URL)
-        rows = handler.read_file()
-        
+        handler = GoogleSheetHandler(self.config.GOOGLECREDENTIALSFILE, self.config.GOOGLESHEETURL)
+        rows = handler.readfile()
         if not rows:
-            logger.error("No data found!")
+            logger.error("No data found or sheet access failed!")
             return
-
-        # 🎯 OPERATOR MODE CONTROL - PRIORITY OVER AUTO-DETECT
+    
+        # Mode selection with safe headers
         if self.config.MODE == "new11":
-            logger.info("🚀 OPERATOR SELECTED: New11-GSHEET.py (PERSONAL PROFILE ONLY)")
+            logger.info("🎯 Mode: new11 (👤 Personal Profile (New11-GSHEET.py))")
             use_company_switch = False
         elif self.config.MODE == "13":
-            logger.info("🚀 OPERATOR SELECTED: 13.py (COMPANY PROFILE FIRST)")
+            logger.info("🎯 Mode: 13 (🏢 Company Page (13.py))")
             use_company_switch = True
         else:
-            # Auto-detect fallback
-            headers = handler.sheet.row_values(1)
-            if any("status(glaztower)" in h.lower() for h in headers):
+            # Safe auto-detect
+            try:
+                headers = handler.sheet.row_values(1) if handler.sheet else []
+                if any("glaztower" in str(h).lower() for h in headers):
+                    use_company_switch = False
+                    logger.info("AUTO-DETECTED New11-GSHEET Personal")
+                else:
+                    use_company_switch = True
+                    logger.info("AUTO-DETECTED 13.py Company")
+            except:
+                logger.warning("Auto-detect failed - defaulting to Personal")
                 use_company_switch = False
-                logger.info("🔍 AUTO-DETECTED: New11-GSHEET (Personal)")
-            else:
-                use_company_switch = True
-                logger.info("🔍 AUTO-DETECTED: 13.py (Company)")
-
         processed = 0
         for i, row in enumerate(rows):
             post_url = str(row.get("Post Url") or row.get("Post") or "").strip()
