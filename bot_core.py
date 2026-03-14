@@ -151,34 +151,70 @@ class LinkedInSeleniumClient:
         options.add_argument("--no-sandbox")
         options.add_argument("--disable-dev-shm-usage")
         options.add_argument("--disable-gpu")
+        options.add_argument("--window-size=1920,1080")
         options.add_argument("--disable-blink-features=AutomationControlled")
         options.add_argument("--user-agent=Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36")
         options.add_experimental_option("excludeSwitches", ["enable-automation"])
         options.add_experimental_option('useAutomationExtension', False)
 
-        # TRY SYSTEM CHROMIUM FIRST (Streamlit Cloud)
-        driver_paths = [
-            "/usr/bin/chromedriver",                    # Streamlit Cloud #1 ✅
-            "/usr/bin/chromium-browser",                # Streamlit Cloud #2 ✅
-            "/usr/lib/chromium-browser/chromedriver",   # Streamlit Cloud #3 ✅
-            ChromeDriverManager(chrome_type=ChromeType.CHROMIUM).install(),
-            ChromeDriverManager().install()             # Local fallback ✅
+        # ✅ FIX: Set chromium binary location explicitly for Streamlit Cloud
+        chromium_binaries = [
+            "/usr/bin/chromium",
+            "/usr/bin/chromium-browser",
+            "/usr/lib/chromium/chromium",
         ]
-        
-        self.driver = None
-        for attempt, path in enumerate(driver_paths, 1):
+        for binary in chromium_binaries:
+            if os.path.exists(binary):
+                options.binary_location = binary
+                logger.info(f"✅ Chromium binary found: {binary}")
+                break
+
+        # ✅ FIX: Build driver path list LAZILY — never call .install() eagerly in a list.
+        # Eagerly calling ChromeDriverManager().install() causes 'NoneType has no attribute split'
+        # when chromium is not in PATH, because the result (None) gets passed to Service().
+        def get_driver_paths():
+            static_paths = [
+                "/usr/bin/chromedriver",                  # Streamlit Cloud (chromium-driver pkg)
+                "/usr/lib/chromium/chromedriver",          # Debian alternative
+                "/usr/lib/chromium-browser/chromedriver",  # Ubuntu alternative
+                "/snap/bin/chromium.chromedriver",         # Snap install
+            ]
+            for p in static_paths:
+                if os.path.exists(p):
+                    yield p
+
+            # Only try webdriver-manager as last resort, and guard against None return
             try:
-                logger.info(f"🔄 [{attempt}/5] Trying: {str(path)[:40]}...")
+                path = ChromeDriverManager(chrome_type=ChromeType.CHROMIUM).install()
+                if path:
+                    yield path
+            except Exception:
+                pass
+            try:
+                path = ChromeDriverManager().install()
+                if path:
+                    yield path
+            except Exception:
+                pass
+
+        self.driver = None
+        for attempt, path in enumerate(get_driver_paths(), 1):
+            try:
+                logger.info(f"🔄 [attempt {attempt}] Trying: {str(path)[:60]}...")
                 service = Service(executable_path=path)
                 self.driver = webdriver.Chrome(service=service, options=options)
-                logger.info(f"✅ [{attempt}/5] DRIVER READY!")
+                logger.info(f"✅ [attempt {attempt}] DRIVER READY with: {path}")
                 break
             except Exception as e:
-                logger.warning(f"❌ [{attempt}/5] Failed: {str(e)[:50]}")
+                logger.warning(f"❌ [attempt {attempt}] Failed: {str(e)[:80]}")
                 continue
-        
+
         if not self.driver:
-            raise Exception("❌ NO WORKING DRIVER - Check packages.txt has 'chromium chromium-driver xvfb'")
+            raise Exception(
+                "❌ NO WORKING CHROMEDRIVER FOUND.\n"
+                "Ensure your packages.txt (not package.txt!) contains:\n"
+                "  chromium\n  chromium-driver\n  xvfb"
+            )
         
         # Stealth (only if driver exists)
         self.driver.execute_cdp_cmd('Page.addScriptToEvaluateOnNewDocument', {
