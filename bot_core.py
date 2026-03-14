@@ -134,100 +134,111 @@ class GoogleSheetHandler:
 
 
 # ==================== RUNTIME CHROME INSTALLER ====================
+def find_playwright_chrome():
+    """Find Chrome binary downloaded by Playwright in its cache directory."""
+    import glob
+    search_roots = [
+        "/home/appuser/.cache/ms-playwright",
+        "/home/adminuser/.cache/ms-playwright",
+        "/root/.cache/ms-playwright",
+        os.path.expanduser("~/.cache/ms-playwright"),
+    ]
+    patterns = [
+        "*/chrome-linux64/chrome",
+        "*/chrome-linux/chrome",
+        "*/chromium-*/chrome-linux/chrome",
+    ]
+    for root in search_roots:
+        for pattern in patterns:
+            matches = glob.glob(os.path.join(root, pattern))
+            if matches:
+                binary = matches[0]
+                logger.info(f"✅ Found Playwright Chrome at: {binary}")
+                return binary
+    return None
+
+
+def find_playwright_chromedriver():
+    """Find chromedriver downloaded by Playwright."""
+    import glob
+    search_roots = [
+        "/home/appuser/.cache/ms-playwright",
+        "/home/adminuser/.cache/ms-playwright",
+        "/root/.cache/ms-playwright",
+        os.path.expanduser("~/.cache/ms-playwright"),
+    ]
+    patterns = [
+        "*/chromedriver-linux64/chromedriver",
+        "*/chromedriver-linux/chromedriver",
+        "*/chromium-*/chromedriver",
+    ]
+    for root in search_roots:
+        for pattern in patterns:
+            matches = glob.glob(os.path.join(root, pattern))
+            if matches:
+                driver = matches[0]
+                logger.info(f"✅ Found Playwright chromedriver at: {driver}")
+                return driver
+    return None
+
+
 def ensure_chrome_installed():
     """
-    Install Chrome at runtime using sudo + urllib (no wget, no root needed directly).
-    packages.txt is ignored on Streamlit Cloud — this is the only reliable fix.
+    Install Chrome at runtime. packages.txt is ignored on Streamlit Cloud.
+    Uses Playwright as primary method since sudo/apt is blocked.
     """
     import subprocess
     import urllib.request
 
-    check_paths = [
-        "/usr/bin/chromium-browser",
-        "/usr/bin/chromium",
-        "/usr/bin/google-chrome",
-        "/usr/bin/google-chrome-stable",
+    # Already installed as system Chrome?
+    system_paths = [
+        "/usr/bin/chromium-browser", "/usr/bin/chromium",
+        "/usr/bin/google-chrome", "/usr/bin/google-chrome-stable",
     ]
-
-    if any(os.path.exists(p) for p in check_paths):
-        logger.info("✅ Chrome already installed — skipping")
+    if any(os.path.exists(p) for p in system_paths):
+        logger.info("✅ System Chrome already installed — skipping")
         return
 
-    logger.info("🌐 Chrome not found — starting runtime install...")
+    # Already installed via Playwright?
+    if find_playwright_chrome():
+        logger.info("✅ Playwright Chrome already present — skipping install")
+        return
+
+    logger.info("🌐 Chrome not found — installing via Playwright (no sudo needed)...")
 
     def run_cmd(cmd, timeout=300):
-        """Run shell command, return (success, stdout, stderr)"""
         try:
             result = subprocess.run(
                 cmd, shell=True, capture_output=True, text=True, timeout=timeout
             )
-            out = result.stdout.strip()
-            err = result.stderr.strip()
+            out = (result.stdout or "").strip()
+            err = (result.stderr or "").strip()
             if out:
                 logger.info(f"  {out[:300]}")
             if err and result.returncode != 0:
-                logger.warning(f"  {err[:300]}")
+                logger.warning(f"  {err[:200]}")
             return result.returncode == 0
         except Exception as e:
             logger.warning(f"  cmd error: {str(e)[:100]}")
             return False
 
-    # ── METHOD 1: sudo apt-get chromium-browser (Ubuntu) ──
-    logger.info("📦 Method 1: sudo apt-get chromium-browser...")
-    run_cmd("sudo apt-get update -qq", timeout=120)
-    ok = run_cmd("sudo apt-get install -y -qq chromium-browser chromium-chromedriver", timeout=300)
-    if ok and any(os.path.exists(p) for p in check_paths):
-        logger.info("✅ Chromium installed via apt-get!")
-        return
-
-    # ── METHOD 2: sudo apt-get chromium (Debian name) ──
-    logger.info("📦 Method 2: sudo apt-get chromium...")
-    ok = run_cmd("sudo apt-get install -y -qq chromium chromium-driver", timeout=300)
-    if ok and any(os.path.exists(p) for p in check_paths):
-        logger.info("✅ Chromium (Debian) installed!")
-        return
-
-    # ── METHOD 3: Download Google Chrome .deb via Python urllib (no wget needed) ──
-    logger.info("📦 Method 3: Downloading Google Chrome .deb via Python urllib...")
-    chrome_url = "https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb"
-    deb_path = "/tmp/google-chrome.deb"
-    try:
-        logger.info(f"  Downloading from {chrome_url}...")
-        urllib.request.urlretrieve(chrome_url, deb_path)
-        logger.info(f"  Download complete — installing .deb...")
-        run_cmd(f"sudo apt-get install -y -qq {deb_path}", timeout=300)
-        run_cmd("sudo apt-get install -y -qq -f", timeout=120)  # fix broken deps
-        if any(os.path.exists(p) for p in check_paths):
-            logger.info("✅ Google Chrome installed via .deb!")
-            return
-    except Exception as e:
-        logger.warning(f"  .deb download/install failed: {str(e)[:150]}")
-
-    # ── METHOD 4: pip install playwright as absolute last resort ──
-    logger.info("📦 Method 4: Trying playwright chromium...")
-    try:
-        run_cmd("pip install playwright -q", timeout=120)
-        run_cmd("python -m playwright install chromium", timeout=300)
-        run_cmd("python -m playwright install-deps chromium", timeout=300)
-        pw_paths = [
-            os.path.expanduser("~/.cache/ms-playwright"),
-            "/root/.cache/ms-playwright",
-            "/home/adminuser/.cache/ms-playwright",
-        ]
-        for pw_path in pw_paths:
-            if os.path.exists(pw_path):
-                logger.info(f"✅ Playwright chromium found at {pw_path}")
-                return
-    except Exception as e:
-        logger.warning(f"  Playwright failed: {str(e)[:100]}")
-
-    logger.error(
-        "❌ ALL install methods failed.\n"
-        "The Streamlit Cloud container does not allow installing Chrome.\n"
-        "Consider deploying on a VPS (Railway, Render, EC2) instead."
+    # Playwright install — no sudo needed, downloads to user home
+    logger.info("📦 Installing Playwright + Chromium (no sudo required)...")
+    run_cmd("pip install playwright -q", timeout=120)
+    # CHROMIUM_SKIP_VALIDATE_HOST_REQUIREMENTS skips the sudo deps check
+    env_prefix = "PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=0 "
+    run_cmd(
+        "python -m playwright install chromium",
+        timeout=600
     )
+    if find_playwright_chrome():
+        logger.info("✅ Playwright Chromium installed successfully!")
+        return
+
+    logger.error("❌ Could not install Chrome. Streamlit Cloud blocks all install methods.")
 
 # ==================== SELENIUM CLIENT ====================
+
 class LinkedInSeleniumClient:
     def __init__(self, email, password, headless=False, config=None):
         self.email = email
@@ -239,7 +250,6 @@ class LinkedInSeleniumClient:
 
     def setup_driver(self):
         """🔥 BULLETPROOF - Works EVERYWHERE (Streamlit Cloud + Local)"""
-        ensure_chrome_installed()
         options = Options()
         if self.headless:
             options.add_argument("--headless=new")
@@ -252,33 +262,41 @@ class LinkedInSeleniumClient:
         options.add_experimental_option("excludeSwitches", ["enable-automation"])
         options.add_experimental_option('useAutomationExtension', False)
 
-        # ✅ FIX: Set chromium binary location explicitly for Streamlit Cloud
-        chromium_binaries = [
-            "/usr/bin/chromium",
+        # ── Find Chrome binary: system first, then Playwright cache ──
+        system_binaries = [
             "/usr/bin/chromium-browser",
-            "/usr/lib/chromium/chromium",
+            "/usr/bin/chromium",
+            "/usr/bin/google-chrome-stable",
+            "/usr/bin/google-chrome",
         ]
-        for binary in chromium_binaries:
-            if os.path.exists(binary):
-                options.binary_location = binary
-                logger.info(f"✅ Chromium binary found: {binary}")
-                break
+        chrome_bin = next((p for p in system_binaries if os.path.exists(p)), None)
+        if not chrome_bin:
+            chrome_bin = find_playwright_chrome()  # Playwright downloaded Chrome
 
-        # ✅ FIX: Build driver path list LAZILY — never call .install() eagerly in a list.
-        # Eagerly calling ChromeDriverManager().install() causes 'NoneType has no attribute split'
-        # when chromium is not in PATH, because the result (None) gets passed to Service().
+        if chrome_bin:
+            options.binary_location = chrome_bin
+            logger.info(f"✅ Using Chrome binary: {chrome_bin}")
+        else:
+            logger.warning("⚠️ No Chrome binary found — driver will try auto-detect")
+
+        # ── Find chromedriver ──
         def get_driver_paths():
-            static_paths = [
-                "/usr/bin/chromedriver",                  # Streamlit Cloud (chromium-driver pkg)
-                "/usr/lib/chromium/chromedriver",          # Debian alternative
-                "/usr/lib/chromium-browser/chromedriver",  # Ubuntu alternative
-                "/snap/bin/chromium.chromedriver",         # Snap install
-            ]
-            for p in static_paths:
+            # 1. Standard system paths
+            for p in [
+                "/usr/bin/chromedriver",
+                "/usr/lib/chromium-browser/chromedriver",
+                "/usr/lib/chromium/chromedriver",
+                "/snap/bin/chromium.chromedriver",
+            ]:
                 if os.path.exists(p):
                     yield p
 
-            # Only try webdriver-manager as last resort, and guard against None return
+            # 2. Playwright chromedriver (matches Playwright Chrome version exactly)
+            pw_driver = find_playwright_chromedriver()
+            if pw_driver:
+                yield pw_driver
+
+            # 3. webdriver-manager as last resort
             try:
                 path = ChromeDriverManager(chrome_type=ChromeType.CHROMIUM).install()
                 if path:
