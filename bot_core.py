@@ -157,10 +157,12 @@ class LinkedInSeleniumClient:
         options.add_experimental_option('useAutomationExtension', False)
 
         # ✅ FIX: Set chromium binary location explicitly for Streamlit Cloud
+        # Ubuntu (Streamlit Cloud) = chromium-browser
+        # Debian = chromium
         chromium_binaries = [
-            "/usr/bin/chromium",
-            "/usr/bin/chromium-browser",
-            "/usr/lib/chromium/chromium",
+            "/usr/bin/chromium-browser",   # Ubuntu (Streamlit Cloud) ✅
+            "/usr/bin/chromium",            # Debian
+            "/usr/lib/chromium/chromium",   # Debian alternative
         ]
         for binary in chromium_binaries:
             if os.path.exists(binary):
@@ -173,10 +175,10 @@ class LinkedInSeleniumClient:
         # when chromium is not in PATH, because the result (None) gets passed to Service().
         def get_driver_paths():
             static_paths = [
-                "/usr/bin/chromedriver",                  # Streamlit Cloud (chromium-driver pkg)
-                "/usr/lib/chromium/chromedriver",          # Debian alternative
-                "/usr/lib/chromium-browser/chromedriver",  # Ubuntu alternative
-                "/snap/bin/chromium.chromedriver",         # Snap install
+                "/usr/bin/chromedriver",                    # Ubuntu (chromium-chromedriver pkg) ✅
+                "/usr/lib/chromium-browser/chromedriver",   # Ubuntu alternative ✅
+                "/usr/lib/chromium/chromedriver",           # Debian
+                "/snap/bin/chromium.chromedriver",          # Snap fallback
             ]
             for p in static_paths:
                 if os.path.exists(p):
